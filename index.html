@@ -150,7 +150,7 @@ details summary { cursor: pointer; color: var(--accent); font-size: 13px; }
         <span>支援 .dxf(建議)與向量 .pdf</span>
       </label>
       <input type="file" id="file" accept=".dxf,.pdf,.dwg" hidden>
-      <div class="note" style="margin-top:10px">DWG 請先在 AutoCAD 用「另存新檔 → DXF」(任何版本都可以),再丟進來。檔案只在你的瀏覽器裡處理,不會上傳。</div>
+      <div class="note" style="margin-top:10px">DWG 請先在 AutoCAD 用「另存新檔 → DXF」,格式選 <b>ASCII</b>(不要選 Binary),版本建議 2013 以後,再丟進來。檔案只在你的瀏覽器裡處理,不會上傳。</div>
       <div id="pdfOpts" class="row small" style="margin-top:8px" hidden>
         <label for="pdfPage">頁</label><select id="pdfPage"></select>
         <label for="pdfScale">比例 1 :</label><input type="number" id="pdfScale" value="100" style="width:70px">
@@ -1813,6 +1813,7 @@ async function loadFile(f) {
 async function loadDXFBytes(u8, name) {
   try {
     $('#pdfOpts').hidden = true;
+    if (new TextDecoder('latin1').decode(u8.subarray(0, 18)) === 'AutoCAD Binary DXF') { setStatus('這是 Binary DXF,請改存成 ASCII 格式:另存新檔 → DXF → 工具/選項 → DXF 選項選「ASCII」。', 0); toast('請改存 ASCII DXF'); return; }
     setStatus(`讀取 ${name}(${(u8.length / 1048576).toFixed(1)} MB)…`, 0.02); await tick();
     const doc = QE.parseDXF(u8, p => { $('#prog').style.width = Math.round(p * 50) + '%'; });
     setStatus('展開圖塊…', 0.55); await tick();
