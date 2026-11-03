@@ -48,7 +48,7 @@ button, input, select { font: inherit; color: inherit; }
 header.top { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--sheet); }
 header.top h1 { font-size: 18px; font-weight: 700; letter-spacing: .02em; }
 header.top .sub { color: var(--muted); font-size: 13px; }
-header.top .proj { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+header.top .proj { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 header.top .proj input { width: 220px; }
 .layout { display: grid; grid-template-columns: 380px minmax(0, 1fr); gap: 16px; padding: 16px 20px; align-items: start; }
 @media (max-width: 980px) { .layout { grid-template-columns: 1fr; } }
@@ -135,7 +135,10 @@ details summary { cursor: pointer; color: var(--accent); font-size: 13px; }
 <header class="top">
   <h1>建材數量估算</h1>
   <span class="sub">平面圖 DXF / PDF → 結構、泥作、磁磚、油漆數量</span>
-  <div class="proj"><label for="projName" class="muted small">案名</label><input type="text" id="projName" placeholder="例:CN25010 集合住宅"></div>
+  <div class="proj"><label for="projName" class="muted small">案名</label><input type="text" id="projName" placeholder="例:CN25010 集合住宅">
+    <button class="btn small" id="saveProj" type="button" title="把本案的樓層、立面、圖層對應與所有設定存成一個檔,可傳給同事">儲存專案檔</button>
+    <label class="btn small" for="openProj" title="開啟之前儲存的專案檔">開啟專案檔</label><input type="file" id="openProj" accept=".json" hidden>
+    <button class="btn small" id="newProj" type="button">新案</button></div>
 </header>
 
 <div class="layout">
@@ -231,7 +234,7 @@ details summary { cursor: pointer; color: var(--accent); font-size: 13px; }
   <div class="tabs" role="tablist">
     <button class="tab on" data-tab="floor" type="button">本層數量</button>
     <button class="tab" data-tab="rooms" type="button">空間明細</button>
-    <button class="tab" data-tab="finish" type="button">裝修與係數</button>
+    <button class="tab" data-tab="finish" type="button">本案設定(磁磚、隔間)</button>
     <button class="tab" data-tab="project" type="button">專案總表 <span id="projCount" class="num"></span></button>
   </div>
   <div class="tabbody" id="tab-floor"><p class="muted">選好範圍、確認圖層後按「計算這一層」。</p></div>
@@ -250,7 +253,7 @@ const S = { kind: 'plan', eroles: {}, zones: [], E: null, EI: null,
   params: QE.defaultParams(), finishes: QE.defaultFinishes(), A: null, Q: null, overrides: {},
   project: { name: '', floors: [], elevs: [] }, view: { cx: 0, cy: 0, s: 1 }, mode: 'pan', showRooms: true, ext: null,
 };
-const ROLE_COLOR = { wall_rc: '#9b2c2c', wall_brick: '#c2560c', wall_light: '#a16207', column: '#6b21a8', beam: '#0f766e', door: '#1d4ed8', window: '#15803d', rail: '#0e7490', boundary: '#334155' };
+const ROLE_COLOR = { wall_rc: '#9b2c2c', wall_brick: '#c2560c', wall_block: '#b45309', wall_light: '#a16207', column: '#6b21a8', beam: '#0f766e', door: '#1d4ed8', window: '#15803d', rail: '#0e7490', boundary: '#334155' };
 const TYPE_COLOR = { wet: '#38bdf8', kitchen: '#f59e0b', balcony: '#a3e635', public: '#c084fc', living: '#fb7185', service: '#94a3b8' };
 const TYPE_NAME = { wet: '浴廁', kitchen: '廚房', balcony: '陽台/露台', public: '公共空間', living: '居室', service: '機房/設備' };
 const fmt = (v, d = 2) => (v == null || !isFinite(v)) ? '—' : v.toLocaleString('zh-TW', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -261,11 +264,11 @@ function setStatus(msg, p) { $('#status').textContent = msg; if (p != null) $('#
 const tick = () => new Promise(r => setTimeout(r, 0));
 
 /* ---------------- 儲存 ---------------- */
-function saveLocal() { try { localStorage.setItem('qe-project', JSON.stringify({ project: S.project, roles: S.roles, eroles: S.eroles, finishes: S.finishes, params: S.params })); } catch (e) {} }
+function saveLocal() { try { localStorage.setItem('qe-project', JSON.stringify({ tileSizes: S.tileSizes, project: S.project, roles: S.roles, eroles: S.eroles, finishes: S.finishes, params: S.params })); } catch (e) {} }
 function loadLocal() {
   try {
     const d = JSON.parse(localStorage.getItem('qe-project') || 'null'); if (!d) return;
-    if (d.project) { S.project = d.project; S.project.elevs = S.project.elevs || []; } if (d.eroles) S.eroles = d.eroles; if (d.roles) S.roles = d.roles; if (d.finishes) S.finishes = Object.assign(QE.defaultFinishes(), d.finishes);
+    if (d.project) { S.project = d.project; S.project.elevs = S.project.elevs || []; } if (d.eroles) S.eroles = d.eroles; if (d.tileSizes) S.tileSizes = d.tileSizes; if (d.roles) S.roles = d.roles; if (d.finishes) S.finishes = Object.assign(QE.defaultFinishes(), d.finishes);
     if (d.params) S.params = Object.assign(QE.defaultParams(), d.params);
   } catch (e) {}
 }
@@ -453,7 +456,7 @@ function renderLayers() {
   const b = S.box; const cnt = new Map();
   for (const p of S.F.polys) { if (p.bb[2] < b[0] || p.bb[0] > b[2] || p.bb[3] < b[1] || p.bb[1] > b[3]) continue; cnt.set(p.L, (cnt.get(p.L) || 0) + 1); }
   const rows = [...cnt.entries()].map(([L, c]) => [S.F.layerNames[L], c]);
-  const order = { wall_rc: 0, wall_brick: 1, wall_light: 2, column: 3, beam: 4, door: 5, window: 6, rail: 7, boundary: 8, ignore: 9 };
+  const order = { wall_rc: 0, wall_brick: 1, wall_block: 1, wall_light: 2, column: 3, beam: 4, door: 5, window: 6, rail: 7, boundary: 8, ignore: 9 };
   if (S.kind === 'elev') return renderElevLayers(wrap, rows);
   rows.sort((a, b) => (order[S.roles[a[0]].role] - order[S.roles[b[0]].role]) || b[1] - a[1]);
   let h = '<table><tbody>';
@@ -624,36 +627,45 @@ function renderFloor() {
 }
 let flash = null;
 
+function fin(r, type) { const ov = S.overrides[r.id] || {}; return Object.assign({}, S.finishes[type] || S.finishes.living, ov.finish || {}); }
 function renderRooms() {
   const el = $('#tab-rooms');
   if (!S.Q) { el.innerHTML = '<p class="muted">計算後會列出每個空間的面積、周長與裝修數量。</p>'; return; }
   const rows = S.A.rooms.filter(r => r.status === 'ok');
   const det = new Map(S.Q.roomDetail.map(d => [d.id, d]));
-  let h = '<p class="help small muted">可以改空間類型(會套用「裝修與係數」的設定),或勾掉不計的空間。</p><div class="tablewrap"><table class="q"><thead><tr><th>計入</th><th>空間</th><th>類型</th><th style="text-align:right">面積 m²</th><th style="text-align:right">周長 m</th><th>地坪</th><th style="text-align:right">壁磚 m²</th><th style="text-align:right">牆面油漆 m²</th><th style="text-align:right">天花油漆 m²</th><th style="text-align:right">門窗</th></tr></thead><tbody>';
+  let h = '<p class="help small muted">可以改空間類型、勾掉不計的空間;個別空間的地磚、壁磚規格與高度也可以在這裡單獨改(例如主浴用不同磁磚)。</p><datalist id="tileFloorList2"><option value="30x30"><option value="30x60"><option value="45x45"><option value="60x60"><option value="60x120"><option value="80x80"></datalist><datalist id="tileWallList2"><option value="25x40"><option value="30x60"><option value="30x30"><option value="20x20"><option value="60x120"></datalist><div class="tablewrap"><table class="q"><thead><tr><th>計入</th><th>空間</th><th>類型</th><th style="text-align:right">面積 m²</th><th style="text-align:right">周長 m</th><th>地坪</th><th>地磚規格</th><th>壁磚規格 / 高度</th><th style="text-align:right">壁磚 m²</th><th style="text-align:right">牆面油漆 m²</th><th style="text-align:right">天花油漆 m²</th><th style="text-align:right">門窗</th></tr></thead><tbody>';
   for (const r of rows) {
     const ov = S.overrides[r.id] || {};
     const d = det.get(r.id);
     const type = ov.type || QE.mergedType(r);
     h += `<tr><td><input type="checkbox" data-ex="${r.id}" ${ov.exclude ? '' : 'checked'} aria-label="計入 ${esc(r.name)}"></td><td>${esc((r.names || [r.name]).join('/'))}</td><td><select data-ty="${r.id}" aria-label="類型">${Object.entries(TYPE_NAME).map(([k, v]) => `<option value="${k}"${k === type ? ' selected' : ''}>${v}</option>`).join('')}</select></td>
-      <td class="n">${fmt(r.area)}</td><td class="n">${fmt(r.perim)}</td><td>${d ? esc(d.floor) : '—'}</td><td class="n">${d ? fmt(d.wallTile) : '—'}</td><td class="n">${d ? fmt(d.wallPaint) : '—'}</td><td class="n">${d ? fmt(d.ceilPaint) : '—'}</td><td class="n">${d ? d.openings : '—'}</td></tr>`;
+      <td class="n">${fmt(r.area)}</td><td class="n">${fmt(r.perim)}</td><td><select data-rf="${r.id}" data-f="floor" aria-label="地坪">${[['tile', '磁磚'], ['wood', '木地板'], ['screed', '粉光'], ['none', '不計']].map(([v, t]) => `<option value="${v}"${v === fin(r, type).floor ? ' selected' : ''}>${t}</option>`).join('')}</select></td>
+      <td><input type="text" data-rf="${r.id}" data-f="floorTile" value="${esc(fin(r, type).floorTile)}" list="tileFloorList2" style="width:72px" aria-label="地磚規格"></td>
+      <td class="row" style="flex-wrap:nowrap"><select data-rf="${r.id}" data-f="wall" aria-label="牆面">${[['tile', '磁磚'], ['paint', '油漆'], ['none', '不計']].map(([v, t]) => `<option value="${v}"${v === fin(r, type).wall ? ' selected' : ''}>${t}</option>`).join('')}</select><input type="text" data-rf="${r.id}" data-f="wallTile" value="${esc(fin(r, type).wallTile)}" list="tileWallList2" style="width:62px" aria-label="壁磚規格"><select data-rf="${r.id}" data-f="tileH" aria-label="壁磚高度">${[['ceil', '到天花'], ['90', '90'], ['120', '120'], ['150', '150'], ['210', '210']].map(([v, t]) => `<option value="${v}"${v === String(fin(r, type).tileH) ? ' selected' : ''}>${t}</option>`).join('')}</select></td>
+      <td class="n">${d ? fmt(d.wallTile) : '—'}</td><td class="n">${d ? fmt(d.wallPaint) : '—'}</td><td class="n">${d ? fmt(d.ceilPaint) : '—'}</td><td class="n">${d ? d.openings : '—'}</td></tr>`;
   }
   h += '</tbody></table></div>';
   el.innerHTML = h;
   el.querySelectorAll('[data-ex]').forEach(c => c.addEventListener('change', e => { const id = +e.target.dataset.ex; S.overrides[id] = Object.assign(S.overrides[id] || {}, { exclude: !e.target.checked }); recompute(); draw(); }));
+  el.querySelectorAll('[data-rf]').forEach(c => c.addEventListener('change', e => { const id = +e.target.dataset.rf; const o = S.overrides[id] = S.overrides[id] || {}; o.finish = Object.assign(o.finish || {}, { [e.target.dataset.f]: e.target.value }); recompute(); }));
   el.querySelectorAll('[data-ty]').forEach(c => c.addEventListener('change', e => { const id = +e.target.dataset.ty; S.overrides[id] = Object.assign(S.overrides[id] || {}, { type: e.target.value }); recompute(); draw(); }));
 }
 
 function renderFinish() {
   const el = $('#tab-finish');
   const F = S.finishes;
-  let h = '<h3 style="font-size:14px;margin-bottom:8px">各類空間的裝修</h3><div class="tablewrap"><table class="q finish"><thead><tr><th>空間類型</th><th>地坪</th><th>地磚規格 cm</th><th>牆面</th><th>壁磚規格 cm</th><th>壁磚高度</th><th>天花板</th></tr></thead><tbody>';
+  let h = `<p class="small muted" style="margin:0 0 10px">每個案子的磁磚規格、隔間做法都不同:這裡的設定跟著專案走,按上方「儲存專案檔」會一起存起來,同事開同一個專案檔就是同一套設定。個別空間要不同規格,到「空間明細」改。</p>
+  <datalist id="tileFloorList"><option value="30x30"><option value="30x60"><option value="45x45"><option value="60x60"><option value="60x120"><option value="80x80"><option value="20x20"><option value="15x90"></datalist>
+  <datalist id="tileWallList"><option value="25x40"><option value="30x60"><option value="30x30"><option value="20x20"><option value="25x33"><option value="60x120"></datalist>
+  <h3 style="font-size:14px;margin-bottom:8px">各類空間的裝修</h3>`;
+  h += '<div class="tablewrap"><table class="q finish"><thead><tr><th>空間類型</th><th>地坪</th><th>地磚規格 cm</th><th>牆面</th><th>壁磚規格 cm</th><th>壁磚高度</th><th>天花板</th></tr></thead><tbody>';
   for (const k in TYPE_NAME) {
     const f = F[k];
     h += `<tr><td><span class="swatch" style="background:${TYPE_COLOR[k]}"></span>${TYPE_NAME[k]}<div class="small muted">${esc(QE.ROOM_TYPES.find(t => t.id === k).re.source.split('|').slice(0, 5).join('、'))}…</div></td>
       <td><select data-k="${k}" data-f="floor"><option value="tile">磁磚</option><option value="wood">木地板</option><option value="screed">水泥粉光</option><option value="none">不計</option></select></td>
-      <td><input type="text" data-k="${k}" data-f="floorTile" value="${esc(f.floorTile)}"></td>
+      <td><input type="text" data-k="${k}" data-f="floorTile" value="${esc(f.floorTile)}" list="tileFloorList"></td>
       <td><select data-k="${k}" data-f="wall"><option value="tile">磁磚</option><option value="paint">油漆</option><option value="none">不計</option></select></td>
-      <td><input type="text" data-k="${k}" data-f="wallTile" value="${esc(f.wallTile)}"></td>
+      <td><input type="text" data-k="${k}" data-f="wallTile" value="${esc(f.wallTile)}" list="tileWallList"></td>
       <td><select data-k="${k}" data-f="tileH"><option value="ceil">到天花板</option><option value="90">90 cm</option><option value="120">120 cm</option><option value="150">150 cm</option><option value="210">210 cm</option><option value="0">0</option></select></td>
       <td><select data-k="${k}" data-f="ceil"><option value="paint">平頂油漆</option><option value="none">不計(另做天花板)</option></select></td></tr>`;
   }
@@ -667,18 +679,29 @@ function renderFinish() {
     <label for="bk12">1/2B 紅磚 塊/m²<input type="number" id="bk12" value="${P.brickPerM2[12]}"></label>
     <label for="bk24">1B 紅磚 塊/m²<input type="number" id="bk24" value="${P.brickPerM2[24]}"></label>
   </div>
+  <h3 style="font-size:14px;margin:18px 0 8px">隔間牆做法</h3>
+  <p class="small muted" style="margin:0 0 8px">每個圖層用哪種隔間,在步驟 03「圖層對應」選:紅磚(磚牆)、白磚/輕質磚、輕隔間(乾式)。白磚與輕隔間牆面不算水泥粉刷,改算批土。</p>
+  <div class="grid2" style="max-width:640px">
+    <label for="blkSize">白磚規格 長x高 cm<input type="text" id="blkSize" value="${esc(P.blockSize)}" list="blkList"></label>
+    <label for="brdSize">輕隔間板材規格 cm<input type="text" id="brdSize" value="${esc(P.boardSize)}" list="brdList"></label>
+    <label for="brdLayers">輕隔間每面板材層數<input type="number" id="brdLayers" value="${P.boardLayers}" min="1" max="3"></label>
+    <label for="studSp">輕隔間立柱間距 cm<input type="number" id="studSp" value="${P.studSpacing}"></label>
+  </div>
+  <datalist id="blkList"><option value="60x20"><option value="60x30"><option value="60x40"></datalist>
+  <datalist id="brdList"><option value="91x182"><option value="91x242"><option value="121x242"></datalist>
   <h3 style="font-size:14px;margin:18px 0 8px">損耗率 %</h3><div class="grid2" style="max-width:640px">
     ${[['concrete', '混凝土'], ['form', '模板'], ['rebar', '鋼筋'], ['brick', '磚'], ['mortar', '水泥砂漿'], ['tile', '磁磚'], ['paint', '油漆']].map(([k, n]) => `<label for="ls_${k}">${n}<input type="number" id="ls_${k}" data-loss="${k}" value="${P.loss[k]}"></label>`).join('')}
   </div>
-  <div class="actions"><button class="btn small" id="resetFinish" type="button">恢復預設值</button><span class="small muted">設定會記在這台電腦的瀏覽器裡,下次打開還在。</span></div>`;
+  <div class="actions"><button class="btn small" id="resetFinish" type="button">恢復預設值</button><span class="small muted">設定會記在這台電腦的瀏覽器裡;要給同事用同一套,請「儲存專案檔」。</span></div>`;
   el.innerHTML = h;
   el.querySelectorAll('[data-k]').forEach(c => { const k = c.dataset.k, f = c.dataset.f; if (c.tagName === 'SELECT') c.value = String(F[k][f]); c.addEventListener('change', e => { F[k][f] = e.target.value; saveLocal(); if (S.A) recompute(); }); });
   const rb = { rbSlab: 'slab', rbBeam: 'beam', rbCol: 'column', rbWall: 'wall' };
   for (const id in rb) $('#' + id).addEventListener('change', e => { P.rebar[rb[id]] = parseFloat(e.target.value) || 0; saveLocal(); if (S.A) recompute(); });
   $('#bk12').addEventListener('change', e => { P.brickPerM2[12] = parseFloat(e.target.value) || 64; P.brickPerM2[10] = P.brickPerM2[12]; saveLocal(); if (S.A) recompute(); });
   $('#bk24').addEventListener('change', e => { P.brickPerM2[24] = parseFloat(e.target.value) || 128; P.brickPerM2[20] = P.brickPerM2[24]; saveLocal(); if (S.A) recompute(); });
+  [['blkSize', 'blockSize', 0], ['brdSize', 'boardSize', 0], ['brdLayers', 'boardLayers', 1], ['studSp', 'studSpacing', 1]].forEach(([id, key, isNum]) => $('#' + id).addEventListener('change', e => { P[key] = isNum ? (parseFloat(e.target.value) || 1) : e.target.value; saveLocal(); if (S.A) recompute(); }));
   el.querySelectorAll('[data-loss]').forEach(c => c.addEventListener('change', e => { P.loss[e.target.dataset.loss] = parseFloat(e.target.value) || 0; saveLocal(); if (S.A) recompute(); }));
-  $('#resetFinish').addEventListener('click', () => { const d = QE.defaultParams(); S.finishes = QE.defaultFinishes(); P.rebar = d.rebar; P.brickPerM2 = d.brickPerM2; P.loss = d.loss; saveLocal(); if (S.A) recompute(); renderFinish(); });
+  $('#resetFinish').addEventListener('click', () => { const d = QE.defaultParams(); S.finishes = QE.defaultFinishes(); P.rebar = d.rebar; P.brickPerM2 = d.brickPerM2; P.loss = d.loss; P.blockSize = d.blockSize; P.boardSize = d.boardSize; P.boardLayers = d.boardLayers; P.studSpacing = d.studSpacing; saveLocal(); if (S.A) recompute(); renderFinish(); });
 }
 
 /* ---------------- 專案 ---------------- */
@@ -771,6 +794,7 @@ async function exportXLSX() {
     ['樓層參數', S.project.floors.map(f => `${f.name}:樓高 ${f.params.floorH} cm、版厚 ${f.params.slabT} cm、天花 ${f.params.ceilH} cm`).join(';')],
     ['含筋率 kg/m³', `版 ${P.rebar.slab}、梁 ${P.rebar.beam}、柱 ${P.rebar.column}、牆 ${P.rebar.wall}`],
     ['紅磚 塊/m²', `1/2B ${P.brickPerM2[12]}、1B ${P.brickPerM2[24]}`],
+    ['白磚 / 輕隔間', `白磚 ${P.blockSize} cm;輕隔間板材 ${P.boardSize} cm × 每面 ${P.boardLayers} 層,立柱間距 ${P.studSpacing} cm`],
     ['損耗率 %', Object.entries(P.loss).map(([k, v]) => ({ concrete: '混凝土', rebar: '鋼筋', brick: '磚', mortar: '砂漿', tile: '磁磚', paint: '油漆', form: '模板' }[k] || k) + ' ' + v).join('、')],
     ['說明', '牆長 = 牆圖層線長 ÷ 2(去除牆頭);門窗上方/下方的牆面已補回;空間由空間名稱文字自動圍出。數量為估算,請以施工圖核對。']];
   for (const k in TYPE_NAME) { const f = S.finishes[k]; pr.push([TYPE_NAME[k], `地坪 ${f.floor} ${f.floorTile};牆 ${f.wall} ${f.wallTile} 高 ${f.tileH};天花 ${f.ceil}`]); }
@@ -784,11 +808,39 @@ async function saveFile(filename, bytes) {
     if (dl) { await dl.save({ filename, data: new Blob([bytes]) }); toast('已儲存 ' + filename); return; }
   } catch (e) { if (e && e.code === 'declined') return; console.warn(e); }
   try {
-    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+    const url = URL.createObjectURL(new Blob([bytes], { type: /\.json$/.test(filename) ? 'application/json' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
     const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
   } catch (e) { toast('這個檢視不能下載檔案,請改用「複製總表」'); }
 }
 $('#projName').addEventListener('change', e => { S.project.name = e.target.value; saveLocal(); });
+function projectFile() { return { app: 'building-estimator', version: 1, saved: new Date().toISOString(), project: S.project, roles: S.roles, eroles: S.eroles, finishes: S.finishes, params: S.params, tileSizes: S.tileSizes || {} }; }
+$('#saveProj').addEventListener('click', async () => {
+  S.project.name = $('#projName').value;
+  const name = (S.project.name || '建築估算') + '_專案.json';
+  await saveFile(name, new TextEncoder().encode(JSON.stringify(projectFile(), null, 1)));
+});
+$('#openProj').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  try {
+    const d = JSON.parse(await f.text());
+    if (d.app !== 'building-estimator') throw new Error('不是建築估算程式的專案檔');
+    S.project = Object.assign({ name: '', floors: [], elevs: [] }, d.project); S.project.elevs = S.project.elevs || [];
+    S.roles = Object.assign(S.roles, d.roles || {}); S.eroles = Object.assign(S.eroles, d.eroles || {});
+    S.finishes = Object.assign(QE.defaultFinishes(), d.finishes || {}); S.params = Object.assign(QE.defaultParams(), d.params || {}, { unitToCm: S.unit });
+    S.tileSizes = d.tileSizes || {};
+    $('#projName').value = S.project.name || ''; writeParams(); saveLocal();
+    if (S.F) { buildRenderCache(); renderLayers(); }
+    if (S.A) recompute(); else renderTab();
+    toast('已開啟專案:' + (S.project.name || f.name));
+  } catch (err) { toast('開啟失敗:' + err.message); }
+});
+$('#newProj').addEventListener('click', () => {
+  const b = $('#newProj');
+  if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = '確定清空?'; setTimeout(() => { b.dataset.confirm = ''; b.textContent = '新案'; }, 4000); return; }
+  b.dataset.confirm = ''; b.textContent = '新案';
+  S.project = { name: '', floors: [], elevs: [] }; S.finishes = QE.defaultFinishes(); S.params = Object.assign(QE.defaultParams(), { unitToCm: S.unit }); S.tileSizes = {}; S.overrides = {};
+  $('#projName').value = ''; writeParams(); saveLocal(); if (S.A) recompute(); else renderTab(); toast('已開新案(設定恢復預設,圖層對應保留)');
+});
 
 /* ---------------- 圖面檢視 ---------------- */
 const cv = $('#cv'); const ctx = cv.getContext('2d');

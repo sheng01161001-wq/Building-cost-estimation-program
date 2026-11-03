@@ -507,7 +507,8 @@ const ROLES = {
   ignore: '忽略',
   wall_rc: 'RC牆',
   wall_brick: '磚牆',
-  wall_light: '輕隔間',
+  wall_block: '白磚/輕質磚',
+  wall_light: '輕隔間(乾式)',
   column: '柱',
   beam: '梁(線)',
   door: '門',
@@ -524,7 +525,9 @@ function guessRole(name) {
     return { role: 'ignore' };
   }
   if (/HATCH/i.test(name)) return { role: 'ignore' };
+  if (/白磚|輕質磚|輕質隔間磚|ALC|AAC/i.test(name)) return { role: 'wall_block', thk: thk || 10 };
   if (/磚|BRICK|0\.5B|1\.0B|1B/i.test(name)) { const t = thk || (/1\.?0?B/i.test(name) && !/0\.5B/i.test(name) ? 24 : 12); return { role: 'wall_brick', thk: t }; }
+  if (/白磚|輕質磚|輕質隔間磚|輕質混凝土|ALC|AAC|BLOCK/i.test(name)) return { role: 'wall_block', thk: thk || 10 };
   if (/輕隔|乾式|石膏|GYP|LGS|DRYWALL/i.test(name)) return { role: 'wall_light', thk: thk || 10 };
   if (/RC|混凝土|CONC/i.test(n) && !/柱|COL|樑|梁|BEAM/i.test(name)) return { role: 'wall_rc', thk: thk || 15 };
   if (/WALL|牆/i.test(name)) return { role: 'wall_rc', thk: thk || 15 };
@@ -587,6 +590,10 @@ function defaultParams() {
     extTile: '4.5x9.5',   // 二丁掛等
     rebar: { slab: 90, beam: 160, column: 200, wall: 100 }, // kg/m³
     brickPerM2: { 12: 64, 24: 128 },
+    blockSize: '60x20',   // 白磚(輕質磚) 長x高 cm
+    boardSize: '91x182',  // 輕隔間板材 cm
+    boardLayers: 1,       // 每面板材層數
+    studSpacing: 40,      // 立柱間距 cm
     loss: { concrete: 2, rebar: 3, brick: 5, mortar: 5, tile: 5, paint: 0, form: 0 },
   };
 }
@@ -623,7 +630,7 @@ function analyzeRegion(F, box, layerRoles, params, onProgress) {
       if (e2 < dx) { err += dx; ay += sy; }
     }
   }
-  const BARRIER = new Set(['wall_rc', 'wall_brick', 'wall_light', 'column', 'rail', 'boundary']);
+  const BARRIER = new Set(['wall_rc', 'wall_brick', 'wall_block', 'wall_light', 'column', 'rail', 'boundary']);
   // 門窗開口(圖塊)
   const openings = detectOpenings(F, polys, roleOf, box, params);
   const opIns = new Set(); for (const o of openings) opIns.add(o.id);
@@ -1104,12 +1111,28 @@ function computeQuantities(A, params, finishes, roomOverrides) {
     add('泥作', `砌磚牆 ${w.thk >= 20 ? '1B' : '1/2B'} (${w.thk}cm)`, 'm²', w.area, 'brick', `牆長 ${w.len.toFixed(1)} m × ${Hw.toFixed(2)} m`);
     add('泥作', `紅磚 ${w.thk >= 20 ? '1B' : '1/2B'}`, '塊', w.area * per, 'brick', `${per} 塊/m²`);
   }
-  for (const w of wallInfo) if (w.role === 'wall_light') add('泥作', `輕隔間牆 (${w.thk}cm)`, 'm²', w.area, 'brick', `牆長 ${w.len.toFixed(1)} m`);
+  let dryFace = 0;
+  for (const w of wallInfo) if (w.role === 'wall_block') {
+    const bs = tileArea(P.blockSize || '60x20') || 0.12;
+    add('泥作', `白磚/輕質磚牆 (${w.thk}cm)`, 'm²', w.area, 'brick', `牆長 ${w.len.toFixed(1)} m × ${Hw.toFixed(2)} m`);
+    add('泥作', `白磚 ${P.blockSize || '60x20'}×${w.thk} cm`, '塊', w.area / bs, 'brick', `${(1 / bs).toFixed(1)} 塊/m²`);
+    add('泥作', '白磚黏著劑', 'kg', w.area * 4, 'brick', '約 4 kg/m²');
+    dryFace += w.area * 2;
+  }
+  for (const w of wallInfo) if (w.role === 'wall_light') {
+    const ba = tileArea(P.boardSize || '91x182') || 1.656;
+    const layers = P.boardLayers || 1;
+    add('泥作', `輕隔間牆 (${w.thk}cm)`, 'm²', w.area, 'brick', `牆長 ${w.len.toFixed(1)} m × ${Hw.toFixed(2)} m`);
+    add('泥作', `輕隔間板材 ${P.boardSize || '91x182'} cm`, '張', w.area * 2 * layers / ba, 'brick', `雙面 × ${layers} 層`);
+    add('泥作', '輕隔間 C 型立柱', 'm', w.len * Hw / ((P.studSpacing || 40) / 100), 'brick', `間距 ${P.studSpacing || 40} cm`);
+    add('泥作', '輕隔間 隔音岩棉', 'm²', w.area, 'brick');
+    dryFace += w.area * 2;
+  }
   // 房間牆面 / 地坪 / 天花
   let paintWall = 0, paintCeil = 0, tileFloor = {}, tileWall = {}, screedFloor = 0, plasterWall = 0, baseWall = 0, baseFloor = 0, woodFloor = 0;
   const roomDetail = [];
   for (const rm of rooms) {
-    const f = finishes[rm.type] || finishes.living;
+    const f = Object.assign({}, finishes[rm.type] || finishes.living, (ov[rm.id] && ov[rm.id].finish) || {});
     const ops = A.openings.filter(o => o.rooms && o.rooms.indexOf(rm.id) >= 0);
     const Ht = f.wall === 'tile' ? (f.tileH === 'ceil' ? Hc : (parseFloat(f.tileH) || 0) / 100) : 0;
     const dedTo = (top) => { let s = 0; for (const o of ops) { const b = o.kind === 'door' ? 0 : P.winSill / 100; const h = o.kind === 'door' ? P.doorH / 100 : P.winH / 100; s += (o.w / 100) * Math.max(0, Math.min(top, b + h) - Math.min(top, b)); } return s; };
@@ -1135,7 +1158,10 @@ function computeQuantities(A, params, finishes, roomOverrides) {
   const extWallA = Math.max(0, extWallLen * H - extOpenA);
   if (railF > 0) add('其他', '陽台欄杆/矮牆(外圍)', 'm', A.footprint.perim * railF, 'form', '外圍周長中屬欄杆部分');
   add('泥作', '外牆 1:3 水泥砂漿打底', 'm²', extWallA, 'mortar', `外牆長 ${extWallLen.toFixed(1)} m × 樓高 ${H} m − 外牆開口 ${extOpenA.toFixed(1)} m²`);
-  add('泥作', '內牆 1:3 水泥砂漿粉刷(油漆面)', 'm²', plasterWall, 'mortar', '至版底,扣門窗');
+  // 白磚、輕隔間牆面不做水泥粉刷,改為批土
+  const skim = Math.min(dryFace, plasterWall);
+  plasterWall -= skim;
+  add('泥作', '內牆 1:3 水泥砂漿粉刷(油漆面)', 'm²', plasterWall, 'mortar', '至版底,扣門窗' + (skim ? `;已扣白磚/輕隔間面 ${skim.toFixed(1)} m²` : ''));
   add('泥作', '內牆 1:3 水泥砂漿打底(貼磚面)', 'm²', baseWall, 'mortar');
   add('泥作', '地坪 1:3 水泥砂漿打底(貼磚)', 'm²', baseFloor, 'mortar');
   add('泥作', '地坪 水泥砂漿粉光', 'm²', screedFloor, 'mortar', woodFloor ? `含木地板區 ${woodFloor.toFixed(1)} m²` : '');
@@ -1144,6 +1170,7 @@ function computeQuantities(A, params, finishes, roomOverrides) {
   for (const k in tileWall) { add('磁磚', `壁磚 ${k} cm`, 'm²', tileWall[k], 'tile'); const ta = tileArea(k); if (ta) add('磁磚', `壁磚 ${k} cm 片數`, '片', tileWall[k] / ta, 'tile'); }
   if (P.extWall === 'tile') add('磁磚', `外牆磚 ${P.extTile} cm`, 'm²', extWallA, 'tile');
   // ---- 油漆 ----
+  if (skim) add('油漆', '批土整平(白磚/輕隔間面)', 'm²', skim, 'paint', '取代水泥粉刷');
   add('油漆', '內牆 水泥漆/乳膠漆', 'm²', paintWall, 'paint', '至天花板高,扣門窗');
   add('油漆', '天花板 平頂漆', 'm²', paintCeil, 'paint');
   if (P.extWall === 'paint') add('油漆', '外牆 塗料', 'm²', extWallA, 'paint');
