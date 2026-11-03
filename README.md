@@ -1,4 +1,6 @@
-# 建築估算程式(Building Estimator)
+<p align="center"><img src="assets/icon-512.png" width="160" alt="小棒槌 建築估算程式"></p>
+
+# 小棒槌 建築估算程式
 
 把建築師給的 CAD 圖(另存成 DXF)或向量 PDF 丟進網頁,自動估算各工種數量:
 
