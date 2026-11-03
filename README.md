@@ -70,12 +70,25 @@
 Settings → Pages → Source 選 `Deploy from a branch`,Branch 選 `main`、資料夾 `/ (root)`,儲存。
 約一分鐘後網址為:`https://sheng01161001-wq.github.io/Building-cost-estimation-program/`
 
+## 在自己電腦留存、自動更新(Windows)
+
+1. 下載最新版 ZIP:<https://github.com/sheng01161001-wq/building-cost-estimation-program/archive/refs/heads/main.zip>,解壓縮到你想放的資料夾(例如 `D:\小棒槌`)。
+2. 雙擊資料夾裡的 **`立即更新.bat`**:從 GitHub 下載最新版,覆蓋這個資料夾裡的程式檔。
+3. 想要每天自動更新:雙擊 **`設定每天自動更新.bat`**,每天 08:30 會在背景自動更新(電腦需開機、連網)。不要了就雙擊 **`取消自動更新.bat`**。
+
+- 只覆蓋程式檔;你自己放在資料夾裡的檔案(例如專案檔 `.json`、匯出的 Excel)不會被刪除或覆蓋,除非檔名剛好和程式檔相同。
+- 每次更新結果記在資料夾裡的 `update-log.txt`。
+- 要用的時候,雙擊 `index.html` 用瀏覽器開啟。
+
 ## 檔案結構
 
 ```
 index.html        可直接使用的單一網頁(已內嵌計算核心)
 src/engine.js     計算核心:DXF 解析、房間偵測、數量計算、立面分析、Excel 產生
 src/index.html    介面原始檔(開發用,引用 engine.js)
+assets/           圖示
+立即更新.bat / update.ps1          從 GitHub 下載最新版覆蓋本資料夾
+設定每天自動更新.bat / 取消自動更新.bat   Windows 排程
 ```
 
 修改 `src/` 之後,重新產生根目錄的 `index.html`:把 `src/index.html` 裡的 `<script src="engine.js"></script>` 換成 `engine.js` 的內容即可。
