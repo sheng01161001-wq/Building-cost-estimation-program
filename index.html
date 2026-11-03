@@ -1,0 +1,2509 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>建材數量估算</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  /* 版面:左側步驟欄 + 右側圖面檢視,結果在下方;像繪圖桌上的估算單 */
+  --paper: #f4f5f2;
+  --sheet: #ffffff;
+  --ink: #1d2733;
+  --muted: #5f6b78;
+  --line: #d9ddd8;
+  --accent: #1f5fa8;
+  --accent-ink: #ffffff;
+  --accent-soft: #e3ecf7;
+  --warn: #b45309;
+  --warn-soft: #fdf1e3;
+  --ok: #2f7d4f;
+  --bad: #b42318;
+  --canvas: #fbfbf9;
+  --font-body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  --font-num: "IBM Plex Mono", ui-monospace, "Consolas", monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #14181d; --sheet: #1c2229; --ink: #e6e9ec; --muted: #9aa5b1; --line: #2e3742;
+    --accent: #6aa6f0; --accent-ink: #0d1520; --accent-soft: #1e2d40; --warn: #f0a85a; --warn-soft: #3a2a17;
+    --ok: #6fcf97; --bad: #f28b82; --canvas: #11151a; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #14181d; --sheet: #1c2229; --ink: #e6e9ec; --muted: #9aa5b1; --line: #2e3742;
+  --accent: #6aa6f0; --accent-ink: #0d1520; --accent-soft: #1e2d40; --warn: #f0a85a; --warn-soft: #3a2a17;
+  --ok: #6fcf97; --bad: #f28b82; --canvas: #11151a; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; }
+body { background: var(--paper); color: var(--ink); font-family: var(--font-body); font-size: 14px; line-height: 1.55; }
+h1, h2, h3 { text-wrap: balance; margin: 0; }
+button, input, select { font: inherit; color: inherit; }
+.num, td.n, .tile b { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+header.top { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--sheet); }
+header.top h1 { font-size: 18px; font-weight: 700; letter-spacing: .02em; }
+header.top .sub { color: var(--muted); font-size: 13px; }
+header.top .proj { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+header.top .proj input { width: 220px; }
+.layout { display: grid; grid-template-columns: 380px minmax(0, 1fr); gap: 16px; padding: 16px 20px; align-items: start; }
+@media (max-width: 980px) { .layout { grid-template-columns: 1fr; } }
+.panel { display: flex; flex-direction: column; gap: 12px; }
+.card { background: var(--sheet); border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+.card h2 { font-size: 15px; display: flex; gap: 8px; align-items: baseline; margin-bottom: 10px; }
+.card h2 .step { font-family: var(--font-num); color: var(--accent); font-size: 13px; }
+.card p.help { margin: 0 0 8px; color: var(--muted); font-size: 13px; }
+.drop { display: block; border: 1.5px dashed var(--line); border-radius: 8px; padding: 16px; text-align: center; cursor: pointer; background: var(--canvas); }
+.drop.hover { border-color: var(--accent); background: var(--accent-soft); }
+.drop strong { display: block; font-size: 14px; }
+.drop span { color: var(--muted); font-size: 12px; }
+.note { background: var(--warn-soft); color: var(--ink); border-left: 3px solid var(--warn); padding: 8px 10px; border-radius: 4px; font-size: 12.5px; }
+.status { font-size: 12.5px; color: var(--muted); margin-top: 8px; min-height: 1.2em; }
+.bar { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; margin-top: 6px; }
+.bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+.btn { border: 1px solid var(--line); background: var(--sheet); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 500; }
+.btn.primary:disabled { opacity: .45; cursor: not-allowed; }
+.btn.small { padding: 3px 8px; font-size: 12.5px; }
+.btn.on { background: var(--accent-soft); border-color: var(--accent); color: var(--ink); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+input[type=text], input[type=number], select { border: 1px solid var(--line); background: var(--sheet); border-radius: 5px; padding: 4px 6px; min-width: 0; }
+input[type=number] { font-family: var(--font-num); }
+.titles { display: flex; flex-wrap: wrap; gap: 6px; max-height: 170px; overflow: auto; }
+.chip { border: 1px solid var(--line); background: var(--canvas); border-radius: 999px; padding: 3px 10px; font-size: 12.5px; cursor: pointer; }
+.chip:hover, .chip.on { border-color: var(--accent); background: var(--accent-soft); }
+.chip em { font-style: normal; color: var(--accent); font-family: var(--font-num); margin-left: 4px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; }
+.grid2 label { display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; color: var(--muted); }
+.grid2 label input, .grid2 label select { color: var(--ink); width: 100%; }
+.unit { color: var(--muted); font-size: 11.5px; }
+.layers { max-height: 300px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; }
+.layers table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.layers td { padding: 3px 6px; border-bottom: 1px solid var(--line); }
+.layers td.name { max-width: 150px; overflow-wrap: anywhere; }
+.layers td.cnt { color: var(--muted); font-family: var(--font-num); text-align: right; }
+.layers select { width: 108px; }
+.layers input { width: 48px; }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.viewer { position: sticky; top: 12px; background: var(--canvas); border: 1px solid var(--line); border-radius: 8px; height: calc(100vh - 110px); min-height: 420px; max-height: 900px; overflow: hidden; }
+.viewer canvas { width: 100%; height: 100%; display: block; touch-action: none; }
+.vtools { position: absolute; top: 10px; left: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
+.vtools .btn { background: var(--sheet); }
+.legend { position: absolute; bottom: 8px; left: 10px; display: flex; gap: 10px; flex-wrap: wrap; font-size: 11.5px; background: color-mix(in srgb, var(--sheet) 88%, transparent); padding: 4px 8px; border-radius: 5px; }
+.empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); text-align: center; padding: 20px; pointer-events: none; }
+.empty b { color: var(--ink); display: block; font-size: 16px; margin-bottom: 4px; }
+.busy { position: absolute; inset: 0; background: color-mix(in srgb, var(--canvas) 70%, transparent); display: none; place-items: center; font-weight: 500; }
+.busy.show { display: grid; }
+.results { margin: 0 20px 28px; }
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.tab { border: 1px solid transparent; border-bottom: none; background: none; padding: 8px 14px; cursor: pointer; border-radius: 6px 6px 0 0; color: var(--muted); }
+.tab.on { background: var(--sheet); border-color: var(--line); color: var(--ink); font-weight: 500; margin-bottom: -1px; }
+.tabbody { background: var(--sheet); border: 1px solid var(--line); border-top: none; border-radius: 0 0 8px 8px; padding: 16px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.tile { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+.tile span { font-size: 12px; color: var(--muted); display: block; }
+.tile b { font-size: 18px; font-weight: 500; }
+.tile small { color: var(--muted); font-family: var(--font-num); margin-left: 4px; }
+.tablewrap { overflow-x: auto; }
+table.q { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.q th { text-align: left; font-weight: 500; color: var(--muted); border-bottom: 1px solid var(--line); padding: 6px 8px; white-space: nowrap; }
+table.q td { border-bottom: 1px solid var(--line); padding: 5px 8px; vertical-align: top; }
+table.q td.n { text-align: right; white-space: nowrap; }
+table.q tr.trade td { background: var(--accent-soft); font-weight: 700; }
+table.q tr.sub td { font-weight: 500; }
+table.q td.memo { color: var(--muted); font-size: 12px; }
+.pill { display: inline-block; font-size: 11.5px; border-radius: 999px; padding: 0 8px; border: 1px solid currentColor; }
+.pill.bad { color: var(--bad); } .pill.ok { color: var(--ok); } .pill.warn { color: var(--warn); }
+.warnlist { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 14px; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; align-items: center; }
+.muted { color: var(--muted); }
+.small { font-size: 12.5px; }
+details summary { cursor: pointer; color: var(--accent); font-size: 13px; }
+.finish select, .finish input { width: 100%; }
+.toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--paper); padding: 8px 16px; border-radius: 6px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 10; }
+.toast.show { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>建材數量估算</h1>
+  <span class="sub">平面圖 DXF / PDF → 結構、泥作、磁磚、油漆數量</span>
+  <div class="proj"><label for="projName" class="muted small">案名</label><input type="text" id="projName" placeholder="例:CN25010 集合住宅"></div>
+</header>
+
+<div class="layout">
+  <div class="panel">
+    <section class="card">
+      <h2><span class="step">01</span>匯入圖檔</h2>
+      <label class="drop" id="drop" for="file">
+        <strong>拖曳檔案到這裡,或點一下選擇</strong>
+        <span>支援 .dxf(建議)與向量 .pdf</span>
+      </label>
+      <input type="file" id="file" accept=".dxf,.pdf,.dwg" hidden>
+      <div class="note" style="margin-top:10px">DWG 請先在 AutoCAD 用「另存新檔 → DXF」(任何版本都可以),再丟進來。檔案只在你的瀏覽器裡處理,不會上傳。</div>
+      <div id="pdfOpts" class="row small" style="margin-top:8px" hidden>
+        <label for="pdfPage">頁</label><select id="pdfPage"></select>
+        <label for="pdfScale">比例 1 :</label><input type="number" id="pdfScale" value="100" style="width:70px">
+        <span class="unit">(以 A1 / 原寸輸出的比例)</span>
+      </div>
+      <div class="status" id="status">尚未載入圖檔。<button class="btn small" id="demoBtn" type="button">載入示範平面圖</button></div>
+      <div class="bar"><i id="prog"></i></div>
+    </section>
+
+    <section class="card">
+      <h2><span class="step">02</span><span id="step2Title">選擇一層平面圖</span></h2>
+      <div class="row" style="margin-bottom:8px" role="group" aria-label="圖面種類">
+        <button class="btn small on" id="modePlan" type="button">平面圖(各工種)</button>
+        <button class="btn small" id="modeElev" type="button">立面圖(外牆)</button>
+      </div>
+      <p class="help" id="step2Help">點圖名會自動框出該層;也可以按「手動框選」在圖上拖曳。</p>
+      <div class="titles" id="titles"><span class="muted small">載入圖檔後顯示偵測到的平面圖</span></div>
+      <div class="row small" style="margin-top:8px"><span class="muted">目前範圍:</span><span id="boxInfo" class="num">—</span></div>
+    </section>
+
+    <section class="card">
+      <h2><span class="step">03</span>圖層對應</h2>
+      <p class="help">依圖層名稱自動判斷,請確認牆種與厚度。只列出範圍內有圖元的圖層。</p>
+      <div class="layers" id="layers"><table><tbody><tr><td class="muted">先選擇範圍</td></tr></tbody></table></div>
+      <div class="row small" style="margin-top:8px"><label for="unitSel" class="muted">圖面單位</label>
+        <select id="unitSel"><option value="0.1">mm</option><option value="1" selected>cm</option><option value="100">m</option></select>
+        <span class="unit" id="unitWhy"></span></div>
+    </section>
+
+    <section class="card">
+      <h2><span class="step">04</span>樓層參數</h2>
+      <div class="grid2" id="planParams">
+        <label for="pName">樓層名稱<input type="text" id="pName" value="標準層"></label>
+        <label for="pRepeat">相同樓層數<input type="number" id="pRepeat" value="1" min="1" step="1"></label>
+        <label for="pFloorH">樓高 cm<input type="number" id="pFloorH" value="320"></label>
+        <label for="pSlab">樓板厚 cm<input type="number" id="pSlab" value="15"></label>
+        <label for="pCeil">天花板高 cm<input type="number" id="pCeil" value="260"></label>
+        <label for="pGap">閉合縫隙 cm<input type="number" id="pGap" value="6"></label>
+        <label for="pBeamB">梁寬 cm<input type="number" id="pBeamB" value="40"></label>
+        <label for="pBeamD">梁深 cm(含版)<input type="number" id="pBeamD" value="70"></label>
+        <label for="pBeamR">無梁線時 梁長 m/m²<input type="number" id="pBeamR" value="0.3" step="0.05"></label>
+        <label for="pDoorH">門高 cm<input type="number" id="pDoorH" value="210"></label>
+        <label for="pWinH">窗高 cm<input type="number" id="pWinH" value="150"></label>
+        <label for="pSill">窗台高 cm<input type="number" id="pSill" value="90"></label>
+        <label for="pExt">外牆裝修<select id="pExt"><option value="tile">外牆磁磚</option><option value="paint">外牆塗料</option><option value="none">不計</option></select></label>
+        <label for="pExtTile">外牆磚規格 cm<input type="text" id="pExtTile" value="4.5x9.5"></label>
+      </div>
+      <div id="elevParams" hidden>
+        <div class="grid2">
+          <label for="eName">立面名稱<input type="text" id="eName" value="正面"></label>
+          <label for="eDefault">預設外牆材料<input type="text" id="eDefault" value="二丁掛" list="matList"></label>
+          <label for="eReturn">凹凸補正 %<input type="number" id="eReturn" value="0" step="1"></label>
+          <label for="eJoint">磁磚灰縫 cm<input type="number" id="eJoint" value="1" step="0.5"></label>
+        </div>
+        <p class="help small" style="margin-top:8px">沒有畫填充線的區塊算「預設外牆材料」。要指定某一塊是別的材料,在下面輸入材料名稱,按「框選材料分區」在立面上拖曳;選「不計」可扣掉屋頂框架等不算外牆的部分。</p>
+        <div class="row"><input type="text" id="zoneMat" value="石材" list="matList" style="width:120px" aria-label="分區材料"><button class="btn small" id="zoneBtn" type="button">框選材料分區</button></div>
+        <datalist id="matList"><option value="二丁掛"><option value="小口磚"><option value="石材"><option value="外牆塗料"><option value="洗石子"><option value="不計"></datalist>
+        <div id="zoneList" class="small" style="margin-top:6px"></div>
+      </div>
+      <div class="actions"><button class="btn primary" id="runBtn" type="button" disabled>計算這一層</button><span class="small muted" id="runInfo"></span></div>
+    </section>
+  </div>
+
+  <div>
+    <div class="viewer" id="viewer">
+      <canvas id="cv"></canvas>
+      <div class="vtools">
+        <button class="btn small" id="fitBtn" type="button">全圖</button>
+        <button class="btn small" id="zoomBoxBtn" type="button">到選取範圍</button>
+        <button class="btn small" id="boxBtn" type="button">手動框選</button>
+        <button class="btn small on" id="roomsBtn" type="button">顯示空間</button>
+      </div>
+      <div class="legend" id="legend"></div>
+      <div class="empty" id="empty"><div><b>還沒有圖面</b>在左邊匯入 DXF 或 PDF。滑鼠滾輪縮放、拖曳平移。</div></div>
+      <div class="busy" id="busy">計算中…</div>
+    </div>
+  </div>
+</div>
+
+<section class="results">
+  <div class="tabs" role="tablist">
+    <button class="tab on" data-tab="floor" type="button">本層數量</button>
+    <button class="tab" data-tab="rooms" type="button">空間明細</button>
+    <button class="tab" data-tab="finish" type="button">裝修與係數</button>
+    <button class="tab" data-tab="project" type="button">專案總表 <span id="projCount" class="num"></span></button>
+  </div>
+  <div class="tabbody" id="tab-floor"><p class="muted">選好範圍、確認圖層後按「計算這一層」。</p></div>
+  <div class="tabbody" id="tab-rooms" hidden></div>
+  <div class="tabbody" id="tab-finish" hidden></div>
+  <div class="tabbody" id="tab-project" hidden></div>
+</section>
+<div class="toast" id="toast"></div>
+
+<script>
+/* 建材數量估算 — 計算核心 (DXF 解析 / 圖元展開 / 房間偵測 / 數量計算)
+ * 純 JavaScript,瀏覽器與 Node 皆可執行。 */
+(function (root) {
+'use strict';
+
+/* ------------------------------------------------------------------ */
+/* 1. 文字解碼                                                          */
+/* ------------------------------------------------------------------ */
+const decoders = {};
+function getDecoder(enc) {
+  if (!decoders[enc]) {
+    try { decoders[enc] = new TextDecoder(enc, { fatal: false }); }
+    catch (e) { decoders[enc] = new TextDecoder('utf-8'); }
+  }
+  return decoders[enc];
+}
+const CP_MAP = { ANSI_950: 'big5', ANSI_936: 'gbk', ANSI_932: 'shift_jis', ANSI_949: 'euc-kr', ANSI_1252: 'windows-1252' };
+
+// bytes: Uint8Array slice. enc: 'utf-8' | 'big5' ...
+function decodeBytes(bytes, enc) {
+  // 是否含 \U+XXXX
+  let hasU = false;
+  for (let i = 0; i + 2 < bytes.length; i++) {
+    if (bytes[i] === 92 && (bytes[i + 1] === 85 || bytes[i + 1] === 117) && bytes[i + 2] === 43) { hasU = true; break; }
+  }
+  if (!hasU) return getDecoder(enc).decode(bytes);
+  // 把 \U+00XX (XX>=80) 還原為位元組 (部分轉檔器會這樣寫 Big5),其餘 \U+XXXX 轉成 Unicode
+  let out = '';
+  let buf = [];
+  const flush = () => { if (buf.length) { out += getDecoder(enc).decode(new Uint8Array(buf)); buf = []; } };
+  for (let i = 0; i < bytes.length; i++) {
+    const b = bytes[i];
+    if (b === 92 && i + 6 < bytes.length + 0 && (bytes[i + 1] === 85 || bytes[i + 1] === 117) && bytes[i + 2] === 43) {
+      const hex = String.fromCharCode(bytes[i + 3], bytes[i + 4], bytes[i + 5], bytes[i + 6]);
+      if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+        const cp = parseInt(hex, 16);
+        if (cp >= 0x80 && cp <= 0xff && enc !== 'utf-8') { buf.push(cp); }
+        else { flush(); out += String.fromCharCode(cp); }
+        i += 6; continue;
+      }
+    }
+    buf.push(b);
+  }
+  flush();
+  return out;
+}
+
+function cleanMText(s) {
+  if (!s) return '';
+  s = s.replace(/\\P/g, '\n').replace(/\\~/g, ' ');
+  s = s.replace(/\\[ACFHQTWfhqtwac][^;\\{}]*;/g, '');
+  s = s.replace(/\\S([^;]*);/g, (m, a) => a.replace(/[#^\/]/, '/'));
+  s = s.replace(/\\[LlOoKk]/g, '');
+  s = s.replace(/[{}]/g, '');
+  s = s.replace(/%%[cC]/g, 'Ø').replace(/%%[dD]/g, '°').replace(/%%[pP]/g, '±').replace(/%%[uUoO]/g, '');
+  return s.trim();
+}
+
+/* ------------------------------------------------------------------ */
+/* 2. DXF 解析 (位元組串流,支援大型檔案)                                 */
+/* ------------------------------------------------------------------ */
+function parseDXF(u8, onProgress) {
+  const n = u8.length;
+  let pos = 0;
+  // 先找 HEADER 取得版本與碼頁
+  let enc = 'utf-8';
+  {
+    const head = new TextDecoder('latin1').decode(u8.subarray(0, Math.min(n, 200000)));
+    const mv = /\$ACADVER\s*\r?\n\s*1\s*\r?\n\s*(AC\d+)/.exec(head);
+    const mc = /\$DWGCODEPAGE\s*\r?\n\s*3\s*\r?\n\s*(\S+)/.exec(head);
+    const ver = mv ? mv[1] : 'AC1021';
+    if (ver < 'AC1021' && mc && CP_MAP[mc[1].toUpperCase()]) enc = CP_MAP[mc[1].toUpperCase()];
+  }
+  function readLine() {
+    if (pos >= n) return null;
+    let s = pos;
+    let e = u8.indexOf(10, pos);
+    if (e < 0) e = n;
+    pos = e + 1;
+    let ee = e;
+    if (ee > s && u8[ee - 1] === 13) ee--;
+    return [s, ee];
+  }
+  function trimRange(r) {
+    let s = r[0], e = r[1];
+    while (s < e && (u8[s] === 32 || u8[s] === 9)) s++;
+    while (e > s && (u8[e - 1] === 32 || u8[e - 1] === 9)) e--;
+    return [s, e];
+  }
+  function intOf(r) { let v = 0, neg = false, i = r[0]; if (u8[i] === 45) { neg = true; i++; } for (; i < r[1]; i++) { const c = u8[i]; if (c < 48 || c > 57) break; v = v * 10 + (c - 48); } return neg ? -v : v; }
+  const latin = new TextDecoder('latin1');
+  function strOf(r) { return latin.decode(u8.subarray(r[0], r[1])); }
+  function txtOf(r) { return decodeBytes(u8.subarray(r[0], r[1]), enc); }
+
+  // 讀取所有 group pairs,但只在需要時解碼
+  const header = {};
+  const layers = {};
+  const blocks = {};
+  const entities = [];
+  let section = null;
+  let cur = null;         // 目前實體 {type, g:[[code,val],...]}
+  let curBlock = null;
+  let lastProgress = 0;
+  let inHeaderVar = null;
+  let tableType = null, tableEntry = null;
+  const TEXT_CODES = new Set([1, 2, 3, 8, 7]);
+
+  function finishEntity() {
+    if (!cur) return;
+    const e = cur; cur = null;
+    if (section === 'ENTITIES') entities.push(e);
+    else if (section === 'BLOCKS' && curBlock) curBlock.ents.push(e);
+  }
+
+  while (true) {
+    const cl = readLine(); if (!cl) break;
+    const vl = readLine(); if (!vl) break;
+    const code = intOf(trimRange(cl));
+    const vr = code === 1 || code === 3 ? vl : trimRange(vl);
+    if (onProgress && pos - lastProgress > 4e6) { lastProgress = pos; onProgress(pos / n); }
+    if (code === 0) {
+      const v = strOf(vr);
+      if (v === 'SECTION') { finishEntity(); section = '?'; continue; }
+      if (v === 'ENDSEC') { finishEntity(); section = null; continue; }
+      if (v === 'EOF') break;
+      if (section === 'TABLES') {
+        if (tableEntry && tableEntry.type === 'LAYER' && tableEntry.name != null) layers[tableEntry.name] = tableEntry;
+        tableEntry = (v === 'TABLE' || v === 'ENDTAB') ? null : { type: v, name: null };
+        continue;
+      }
+      if (section === 'BLOCKS') {
+        if (v === 'BLOCK') { finishEntity(); curBlock = { name: null, base: [0, 0], ents: [], _hdr: true }; continue; }
+        if (v === 'ENDBLK') { finishEntity(); if (curBlock && curBlock.name != null) blocks[curBlock.name] = curBlock; curBlock = null; cur = { type: 'ENDBLK', g: [], skip: true }; continue; }
+      }
+      if (section === 'ENTITIES' || section === 'BLOCKS') {
+        if (cur && cur.skip) cur = null;
+        if (curBlock) curBlock._hdr = false;
+        finishEntity();
+        cur = { type: v, g: [] };
+      }
+      continue;
+    }
+    if (section === '?') { if (code === 2) section = strOf(vr); continue; }
+    if (section === 'HEADER') {
+      if (code === 9) { inHeaderVar = strOf(vr); continue; }
+      if (inHeaderVar) { header[inHeaderVar] = header[inHeaderVar] || {}; header[inHeaderVar][code] = strOf(vr); }
+      continue;
+    }
+    if (section === 'TABLES') {
+      if (tableEntry && tableEntry.type === 'LAYER') {
+        if (code === 2) tableEntry.name = txtOf(vr);
+        else if (code === 62) tableEntry.color = intOf(vr);
+        else if (code === 70) tableEntry.flags = intOf(vr);
+      }
+      continue;
+    }
+    if (section === 'BLOCKS' && curBlock && curBlock._hdr && !cur) {
+      if (code === 2) curBlock.name = txtOf(vr);
+      else if (code === 10) curBlock.base[0] = parseFloat(strOf(vr));
+      else if (code === 20) curBlock.base[1] = parseFloat(strOf(vr));
+      continue;
+    }
+    if (cur && !cur.skip) {
+      if (TEXT_CODES.has(code)) cur.g.push(code, txtOf(vr));
+      else if (code >= 10 && code < 60 || code >= 210 && code < 240 || code >= 1010 && code < 1060) cur.g.push(code, parseFloat(strOf(vr)));
+      else if (code >= 60 && code < 100 || code >= 280 && code < 300 || code >= 370 && code < 390) cur.g.push(code, intOf(vr));
+      // 其他 code 略過
+    }
+  }
+  finishEntity();
+  if (tableEntry && tableEntry.type === 'LAYER' && tableEntry.name != null) layers[tableEntry.name] = tableEntry;
+  const ins = header.$INSUNITS ? parseInt(header.$INSUNITS[70]) : 0;
+  return { header, layers, blocks, entities, insunits: ins, encoding: enc };
+}
+
+/* 實體 group list 取值工具 */
+function gv(g, code, def) { for (let i = 0; i < g.length; i += 2) if (g[i] === code) return g[i + 1]; return def; }
+
+/* ------------------------------------------------------------------ */
+/* 3. 圖元展開(INSERT 遞迴、OCS、弧線離散)                              */
+/* ------------------------------------------------------------------ */
+// 矩陣 [a,b,c,d,e,f] : x' = a x + b y + c ; y' = d x + e y + f
+function mmul(A, B) { return [A[0] * B[0] + A[1] * B[3], A[0] * B[1] + A[1] * B[4], A[0] * B[2] + A[1] * B[5] + A[2], A[3] * B[0] + A[4] * B[3], A[3] * B[1] + A[4] * B[4], A[3] * B[2] + A[4] * B[5] + A[5]]; }
+const ID = [1, 0, 0, 0, 1, 0];
+
+function arcPts(cx, cy, r, a0, a1, out, M, ocsFlip) {
+  if (a1 < a0) a1 += Math.PI * 2;
+  const k = Math.max(3, Math.min(64, Math.ceil((a1 - a0) / (Math.PI / 16))));
+  for (let i = 0; i <= k; i++) {
+    const a = a0 + (a1 - a0) * i / k;
+    let x = cx + r * Math.cos(a), y = cy + r * Math.sin(a);
+    if (ocsFlip) x = -x;
+    out.push(M[0] * x + M[1] * y + M[2], M[3] * x + M[4] * y + M[5]);
+  }
+}
+function bulgeTo(x1, y1, x2, y2, b, out) {
+  // 加入 (x1,y1)->(x2,y2) 的中間點(不含終點)
+  const th = 4 * Math.atan(b);
+  const dx = x2 - x1, dy = y2 - y1, c = Math.hypot(dx, dy);
+  if (c === 0 || Math.abs(b) < 1e-9) return;
+  const r = c / (2 * Math.sin(th / 2));
+  const h = r * Math.cos(th / 2);
+  const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+  const cx = mx - dy / c * h, cy = my + dx / c * h;
+  const a0 = Math.atan2(y1 - cy, x1 - cx);
+  const k = Math.max(2, Math.min(32, Math.ceil(Math.abs(th) / (Math.PI / 16))));
+  const R = Math.abs(r);
+  for (let i = 1; i < k; i++) {
+    const a = a0 + th * i / k;
+    out.push(cx + R * Math.cos(a), cy + R * Math.sin(a));
+  }
+}
+
+/* HATCH 邊界:回傳多個封閉迴圈 (局部座標 x,y,...) */
+function parseHatchLoops(g) {
+  let k = -1;
+  for (let i = 0; i < g.length; i += 2) if (g[i] === 91) { k = i; break; }
+  if (k < 0) return [];
+  const np = g[k + 1]; let i = k + 2; const loops = [];
+  const n = g.length;
+  for (let p = 0; p < np && i < n; p++) {
+    while (i < n && g[i] !== 92) i += 2;
+    if (i >= n) break;
+    const flag = g[i + 1]; i += 2;
+    const pts = [];
+    if (flag & 2) {
+      let hasB = 0;
+      if (g[i] === 72) { hasB = g[i + 1]; i += 2; }
+      if (g[i] === 73) i += 2;
+      if (g[i] === 93) i += 2;
+      const vx = [], vy = [], vb = [];
+      while (i < n && g[i] !== 97 && g[i] !== 92) {
+        if (g[i] === 10) { vx.push(g[i + 1]); vb.push(0); } else if (g[i] === 20) vy.push(g[i + 1]); else if (g[i] === 42 && vb.length) vb[vb.length - 1] = g[i + 1];
+        i += 2;
+      }
+      for (let j = 0; j < Math.min(vx.length, vy.length); j++) {
+        pts.push(vx[j], vy[j]);
+        const jn = (j + 1) % vx.length;
+        if (vb[j]) bulgeTo(vx[j], vy[j], vx[jn], vy[jn], vb[j], pts);
+      }
+    } else {
+      if (g[i] === 93) i += 2;
+      while (i < n && g[i] === 72) {
+        const et = g[i + 1]; i += 2;
+        const e = {};
+        const cps = [];
+        while (i < n && g[i] !== 72 && g[i] !== 97 && g[i] !== 92) {
+          const c = g[i], v = g[i + 1];
+          if (et === 4) { if (c === 10) cps.push([v, 0]); else if (c === 20 && cps.length) cps[cps.length - 1][1] = v; }
+          else if (!(c in e)) e[c] = v;
+          i += 2;
+        }
+        if (et === 1) { if (!pts.length) pts.push(e[10], e[20]); pts.push(e[11], e[21]); }
+        else if (et === 2 || et === 3) {
+          const cx = e[10], cy = e[20];
+          let a0 = (e[50] || 0) * Math.PI / 180, a1 = (e[51] === undefined ? 360 : e[51]) * Math.PI / 180;
+          const ccw = e[73] === undefined ? 1 : e[73];
+          let mx, my, ra;
+          if (et === 2) { mx = e[40]; my = 0; ra = 1; } else { mx = e[11]; my = e[21]; ra = e[40] || 1; }
+          if (!ccw) { a0 = -a0; a1 = -a1; }
+          let sweep = a1 - a0;
+          if (ccw && sweep < 0) sweep += Math.PI * 2;
+          if (!ccw && sweep > 0) sweep -= Math.PI * 2;
+          const kk = Math.max(4, Math.min(48, Math.ceil(Math.abs(sweep) / (Math.PI / 16))));
+          for (let j = 0; j <= kk; j++) {
+            const a = a0 + sweep * j / kk;
+            pts.push(cx + mx * Math.cos(a) - my * ra * Math.sin(a), cy + my * Math.cos(a) + mx * ra * Math.sin(a));
+          }
+        } else if (et === 4) { for (const q of cps) pts.push(q[0], q[1]); }
+      }
+    }
+    if (pts.length >= 6) loops.push(pts);
+  }
+  return loops;
+}
+
+/* 展開為:
+ * polys: [{L:layerIdx, p:Float64Array(x,y,...), c:closed, ins:insertId}]
+ * texts: [{L, x, y, h, s}]
+ * inserts: [{L, name, parent, box:[minx,miny,maxx,maxy](world), w, h (local size*scale), cx, cy}]
+ */
+function flattenDXF(doc, onProgress) {
+  const layerNames = [];
+  const layerIdx = new Map();
+  function LI(name) { let i = layerIdx.get(name); if (i === undefined) { i = layerNames.length; layerNames.push(name); layerIdx.set(name, i); } return i; }
+  const polys = [], texts = [], inserts = [], hatches = [];
+  const bboxCache = new Map();
+
+  function localBBox(name, depth) {
+    if (bboxCache.has(name)) return bboxCache.get(name);
+    bboxCache.set(name, null);
+    const b = doc.blocks[name];
+    if (!b) return null;
+    let bb = [Infinity, Infinity, -Infinity, -Infinity];
+    const tmp = { polys: [], texts: [], inserts: [] };
+    emitEntities(b.ents, ID, null, depth + 1, -1, tmp, true);
+    for (const p of tmp.polys) for (let i = 0; i < p.p.length; i += 2) { const x = p.p[i], y = p.p[i + 1]; if (x < bb[0]) bb[0] = x; if (y < bb[1]) bb[1] = y; if (x > bb[2]) bb[2] = x; if (y > bb[3]) bb[3] = y; }
+    if (!isFinite(bb[0])) bb = null;
+    bboxCache.set(name, bb);
+    return bb;
+  }
+
+  function push(out, L, arr, closed, ins) {
+    if (arr.length < 4) return;
+    out.polys.push({ L, p: Float64Array.from(arr), c: closed, ins });
+  }
+
+  function emitEntities(ents, M, inhLayer, depth, insId, out, bboxOnly) {
+    if (depth > 16) return;
+    for (const e of ents) {
+      const g = e.g;
+      let lay = gv(g, 8, '0');
+      if ((lay === '0' || lay === '') && inhLayer != null) lay = inhLayer;
+      const L = bboxOnly ? 0 : LI(lay);
+      const ez = gv(g, 230, 1);
+      const flip = ez < 0;
+      const T = (x, y) => { if (flip) x = -x; return [M[0] * x + M[1] * y + M[2], M[3] * x + M[4] * y + M[5]]; };
+      const t = e.type;
+      if (t === 'LINE') {
+        const a = [gv(g, 10, 0), gv(g, 20, 0)], b = [gv(g, 11, 0), gv(g, 21, 0)];
+        const p1 = [M[0] * a[0] + M[1] * a[1] + M[2], M[3] * a[0] + M[4] * a[1] + M[5]];
+        const p2 = [M[0] * b[0] + M[1] * b[1] + M[2], M[3] * b[0] + M[4] * b[1] + M[5]];
+        push(out, L, [p1[0], p1[1], p2[0], p2[1]], false, insId);
+      } else if (t === 'LWPOLYLINE') {
+        const flag = gv(g, 70, 0); const closed = !!(flag & 1);
+        const vx = [], vy = [], vb = [];
+        for (let i = 0; i < g.length; i += 2) {
+          if (g[i] === 10) { vx.push(g[i + 1]); vb.push(0); }
+          else if (g[i] === 20) vy.push(g[i + 1]);
+          else if (g[i] === 42 && vb.length) vb[vb.length - 1] = g[i + 1];
+        }
+        const pts = [];
+        const nV = Math.min(vx.length, vy.length);
+        for (let i = 0; i < nV; i++) {
+          pts.push(vx[i], vy[i]);
+          const j = i + 1 < nV ? i + 1 : (closed ? 0 : -1);
+          if (j >= 0 && vb[i]) bulgeTo(vx[i], vy[i], vx[j], vy[j], vb[i], pts);
+        }
+        if (closed && nV > 2) pts.push(vx[0], vy[0]);
+        const w = [];
+        for (let i = 0; i < pts.length; i += 2) { const q = T(pts[i], pts[i + 1]); w.push(q[0], q[1]); }
+        push(out, L, w, closed, insId);
+      } else if (t === 'POLYLINE') {
+        // 頂點在 e.verts (由 groupPolylines 收集)
+        const flag = gv(g, 70, 0); const closed = !!(flag & 1);
+        if (flag & (16 | 64)) continue; // mesh
+        const vs = e.verts || [];
+        const pts = [];
+        for (let i = 0; i < vs.length; i++) {
+          const v = vs[i]; pts.push(v[0], v[1]);
+          const j = i + 1 < vs.length ? i + 1 : (closed ? 0 : -1);
+          if (j >= 0 && v[2]) bulgeTo(v[0], v[1], vs[j][0], vs[j][1], v[2], pts);
+        }
+        if (closed && vs.length > 2) pts.push(vs[0][0], vs[0][1]);
+        const w = [];
+        const is3d = !!(flag & 8);
+        for (let i = 0; i < pts.length; i += 2) { const q = is3d ? [M[0] * pts[i] + M[1] * pts[i + 1] + M[2], M[3] * pts[i] + M[4] * pts[i + 1] + M[5]] : T(pts[i], pts[i + 1]); w.push(q[0], q[1]); }
+        push(out, L, w, closed, insId);
+      } else if (t === 'ARC' || t === 'CIRCLE') {
+        const cx = gv(g, 10, 0), cy = gv(g, 20, 0), r = gv(g, 40, 0);
+        let a0 = 0, a1 = Math.PI * 2;
+        if (t === 'ARC') { a0 = gv(g, 50, 0) * Math.PI / 180; a1 = gv(g, 51, 360) * Math.PI / 180; }
+        const w = []; arcPts(cx, cy, r, a0, a1, w, M, flip);
+        push(out, L, w, t === 'CIRCLE', insId);
+      } else if (t === 'ELLIPSE') {
+        const cx = gv(g, 10, 0), cy = gv(g, 20, 0), mx = gv(g, 11, 1), my = gv(g, 21, 0), ra = gv(g, 40, 1);
+        let p0 = gv(g, 41, 0), p1 = gv(g, 42, Math.PI * 2); if (p1 < p0) p1 += Math.PI * 2;
+        const k = Math.max(8, Math.min(64, Math.ceil((p1 - p0) / (Math.PI / 16))));
+        const w = [];
+        for (let i = 0; i <= k; i++) { const a = p0 + (p1 - p0) * i / k; const x = cx + mx * Math.cos(a) - my * ra * Math.sin(a); const y = cy + my * Math.cos(a) + mx * ra * Math.sin(a); const q = T(x, y); w.push(q[0], q[1]); }
+        push(out, L, w, Math.abs(p1 - p0 - Math.PI * 2) < 1e-6, insId);
+      } else if (t === 'SPLINE') {
+        const fx = [], fy = [], cxs = [], cys = [];
+        for (let i = 0; i < g.length; i += 2) { if (g[i] === 11) fx.push(g[i + 1]); else if (g[i] === 21) fy.push(g[i + 1]); else if (g[i] === 10) cxs.push(g[i + 1]); else if (g[i] === 20) cys.push(g[i + 1]); }
+        const X = fx.length > 1 ? fx : cxs, Y = fx.length > 1 ? fy : cys;
+        const w = []; for (let i = 0; i < Math.min(X.length, Y.length); i++) { const q = T(X[i], Y[i]); w.push(q[0], q[1]); }
+        push(out, L, w, false, insId);
+      } else if (t === 'SOLID' || t === '3DFACE') {
+        const pts = [[gv(g, 10, 0), gv(g, 20, 0)], [gv(g, 11, 0), gv(g, 21, 0)], [gv(g, 13, 0), gv(g, 23, 0)], [gv(g, 12, 0), gv(g, 22, 0)]];
+        const w = []; for (const p of pts) { const q = t === 'SOLID' ? T(p[0], p[1]) : [M[0] * p[0] + M[1] * p[1] + M[2], M[3] * p[0] + M[4] * p[1] + M[5]]; w.push(q[0], q[1]); }
+        w.push(w[0], w[1]);
+        push(out, L, w, true, insId);
+      } else if (t === 'TEXT' || t === 'MTEXT' || t === 'ATTRIB') {
+        if (bboxOnly) continue;
+        let s = gv(g, 1, '');
+        if (t === 'MTEXT') { let pre = ''; for (let i = 0; i < g.length; i += 2) if (g[i] === 3) pre += g[i + 1]; s = cleanMText(pre + s); }
+        else s = cleanMText(s);
+        if (!s) continue;
+        let x = gv(g, 10, 0), y = gv(g, 20, 0);
+        const ha = gv(g, 72, 0), va = gv(g, 73, 0);
+        if (t !== 'MTEXT' && (ha || va)) { x = gv(g, 11, x); y = gv(g, 21, y); }
+        const q = (t === 'MTEXT') ? [M[0] * x + M[1] * y + M[2], M[3] * x + M[4] * y + M[5]] : T(x, y);
+        const h = gv(g, 40, 0) * Math.hypot(M[0], M[3]);
+        // 估算文字中心:以字高 * 字數 粗估
+        let cx = q[0], cy = q[1];
+        if (t !== 'MTEXT') {
+          const rot = gv(g, 50, 0) * Math.PI / 180;
+          const len = s.length * h * 0.9;
+          let off = 0.5; if (ha === 1 || ha === 4) off = 0; else if (ha === 2) off = -0.5; else if (ha === 0) off = 0.5;
+          const ux = Math.cos(rot) * len * off, uy = Math.sin(rot) * len * off;
+          const vx = -Math.sin(rot) * h * (va === 2 ? 0 : va === 3 ? -0.5 : 0.5), vy = Math.cos(rot) * h * (va === 2 ? 0 : va === 3 ? -0.5 : 0.5);
+          cx = q[0] + (M[0] * ux + M[1] * uy) + (M[0] * vx + M[1] * vy);
+          cy = q[1] + (M[3] * ux + M[4] * uy) + (M[3] * vx + M[4] * vy);
+        } else {
+          const ap = gv(g, 71, 1); const wdt = gv(g, 41, s.length * h) * Math.hypot(M[0], M[3]);
+          const col = (ap - 1) % 3, row = Math.floor((ap - 1) / 3);
+          cx = q[0] + (col === 0 ? wdt / 2 : col === 2 ? -wdt / 2 : 0) * Math.sign(M[0] || 1);
+          cy = q[1] + (row === 0 ? -h / 2 : row === 2 ? h / 2 : 0);
+        }
+        texts.push({ L, x: cx, y: cy, h, s });
+      } else if (t === 'HATCH') {
+        if (bboxOnly) continue;
+        const loops = parseHatchLoops(g);
+        if (!loops.length) continue;
+        const wl = loops.map(lp => { const o = new Float64Array(lp.length); for (let i = 0; i < lp.length; i += 2) { const q = T(lp[i], lp[i + 1]); o[i] = q[0]; o[i + 1] = q[1]; } return o; });
+        let a = Infinity, b2 = Infinity, c = -Infinity, d = -Infinity;
+        for (const lp of wl) for (let i = 0; i < lp.length; i += 2) { if (lp[i] < a) a = lp[i]; if (lp[i] > c) c = lp[i]; if (lp[i + 1] < b2) b2 = lp[i + 1]; if (lp[i + 1] > d) d = lp[i + 1]; }
+        hatches.push({ L, pat: gv(g, 2, ''), loops: wl, bb: [a, b2, c, d], ins: insId });
+      } else if (t === 'INSERT') {
+        const name = gv(g, 2, '');
+        const b = doc.blocks[name];
+        if (!b || name.startsWith('*D')) { /* 標註圖塊略過 */ if (!b) continue; }
+        if (name.startsWith('*D') || name.startsWith('*d')) continue;
+        const sx = gv(g, 41, 1) || 1, sy = gv(g, 42, 1) || 1;
+        const rot = gv(g, 50, 0) * Math.PI / 180;
+        let px = gv(g, 10, 0), py = gv(g, 20, 0);
+        const nc = Math.max(1, gv(g, 70, 1)), nr = Math.max(1, gv(g, 71, 1));
+        const csp = gv(g, 44, 0), rsp = gv(g, 45, 0);
+        const c = Math.cos(rot), s = Math.sin(rot);
+        for (let ci = 0; ci < nc; ci++) for (let ri = 0; ri < nr; ri++) {
+          const ox = px + c * ci * csp - s * ri * rsp, oy = py + s * ci * csp + c * ri * rsp;
+          let Mi = [c * sx, -s * sy, 0, s * sx, c * sy, 0];
+          Mi[2] = ox - (Mi[0] * b.base[0] + Mi[1] * b.base[1]);
+          Mi[5] = oy - (Mi[3] * b.base[0] + Mi[4] * b.base[1]);
+          if (flip) Mi = [-Mi[0], -Mi[1], -Mi[2], Mi[3], Mi[4], Mi[5]];
+          const M2 = mmul(M, Mi);
+          let id = -1;
+          if (!bboxOnly) {
+            const lb = localBBox(name, depth);
+            let box = null, w = 0, h = 0;
+            if (lb) {
+              const cs = [[lb[0], lb[1]], [lb[2], lb[1]], [lb[2], lb[3]], [lb[0], lb[3]]].map(p => [M2[0] * p[0] + M2[1] * p[1] + M2[2], M2[3] * p[0] + M2[4] * p[1] + M2[5]]);
+              box = cs;
+              w = Math.hypot(cs[1][0] - cs[0][0], cs[1][1] - cs[0][1]);
+              h = Math.hypot(cs[3][0] - cs[0][0], cs[3][1] - cs[0][1]);
+            }
+            id = inserts.length;
+            inserts.push({ L, name, parent: insId, box, w, h, depth });
+          }
+          emitEntities(b.ents, M2, lay, depth + 1, bboxOnly ? -1 : id, out, bboxOnly);
+          if (!bboxOnly) {
+            // ATTRIB 在 INSERT 之後(屬於本實體)
+            if (e.attribs) emitEntities(e.attribs, M, inhLayer, depth, insId, out, bboxOnly);
+          }
+        }
+      }
+    }
+  }
+  // 收集 POLYLINE/VERTEX/SEQEND 與 INSERT/ATTRIB
+  function group(ents) {
+    const out = [];
+    let i = 0;
+    while (i < ents.length) {
+      const e = ents[i];
+      if (e.type === 'POLYLINE') {
+        e.verts = []; i++;
+        while (i < ents.length && ents[i].type === 'VERTEX') { const g = ents[i].g; const fl = gv(g, 70, 0); if (!(fl & 16)) e.verts.push([gv(g, 10, 0), gv(g, 20, 0), gv(g, 42, 0)]); i++; }
+        if (i < ents.length && ents[i].type === 'SEQEND') i++;
+        out.push(e); continue;
+      }
+      if (e.type === 'INSERT') {
+        i++;
+        if (gv(e.g, 66, 0)) {
+          e.attribs = [];
+          while (i < ents.length && (ents[i].type === 'ATTRIB')) { e.attribs.push(ents[i]); i++; }
+          if (i < ents.length && ents[i].type === 'SEQEND') i++;
+        }
+        out.push(e); continue;
+      }
+      if (e.type === 'VERTEX' || e.type === 'SEQEND' || e.type === 'ATTRIB' && false) { i++; continue; }
+      out.push(e); i++;
+    }
+    return out;
+  }
+  for (const k in doc.blocks) doc.blocks[k].ents = group(doc.blocks[k].ents);
+  const top = group(doc.entities);
+  const out = { polys, texts, inserts };
+  // 依頂層實體分批處理以便回報進度
+  const chunk = 2000;
+  for (let i = 0; i < top.length; i += chunk) {
+    emitEntities(top.slice(i, i + chunk), ID, null, 0, -1, out, false);
+    if (onProgress) onProgress(i / top.length);
+  }
+  // 計算 bbox
+  for (const p of polys) {
+    let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity; const q = p.p;
+    for (let i = 0; i < q.length; i += 2) { const x = q[i], y = q[i + 1]; if (x < a) a = x; if (y < b) b = y; if (x > c) c = x; if (y > d) d = y; }
+    p.bb = [a, b, c, d];
+  }
+  return { layerNames, polys, texts, inserts, hatches };
+}
+
+/* ------------------------------------------------------------------ */
+/* 4. 圖層角色自動判斷                                                   */
+/* ------------------------------------------------------------------ */
+const ROLES = {
+  ignore: '忽略',
+  wall_rc: 'RC牆',
+  wall_brick: '磚牆',
+  wall_light: '輕隔間',
+  column: '柱',
+  beam: '梁(線)',
+  door: '門',
+  window: '窗',
+  rail: '欄杆/矮牆',
+  boundary: '邊界線(只圍房間)',
+};
+function guessRole(name) {
+  const n = name.toUpperCase();
+  const thk = (() => { const m = /(\d+(?:\.\d+)?)\s*CM/i.exec(name); if (m) return parseFloat(m[1]); const m2 = /(\d{2})\s*(?:RC|牆)/i.exec(name); return m2 ? parseFloat(m2[1]) : null; })();
+  if (/DIM|尺寸|標註|TEXT|文字|WORD|說明|圖名|圖框|FRAME|HATCH|填充|家具|FURN|衛浴|TOILET|SANI|廚具|KITCH|冷氣|^AC$|GRID|格線|座標|軸|PATT|立面|ELEV|樹|PLANT|車|PARK|基地|地界|法定|面積|AREA|上色|DEFPOINTS|底圖|編號|NO\.|MARK|問題|SYMB|符號|LIFT|電梯|STAIR|樓梯|梯|天花|CEIL|設備|配電|PHAN|消防|燈|LIGHT|管|PIPE/i.test(name)
+      && !/RC|磚|BRICK|WALL(?!-HATCH)/i.test(name)) {
+    if (/欄杆|RAIL/i.test(name)) return { role: 'rail', thk: 10 };
+    return { role: 'ignore' };
+  }
+  if (/HATCH/i.test(name)) return { role: 'ignore' };
+  if (/磚|BRICK|0\.5B|1\.0B|1B/i.test(name)) { const t = thk || (/1\.?0?B/i.test(name) && !/0\.5B/i.test(name) ? 24 : 12); return { role: 'wall_brick', thk: t }; }
+  if (/輕隔|乾式|石膏|GYP|LGS|DRYWALL/i.test(name)) return { role: 'wall_light', thk: thk || 10 };
+  if (/RC|混凝土|CONC/i.test(n) && !/柱|COL|樑|梁|BEAM/i.test(name)) return { role: 'wall_rc', thk: thk || 15 };
+  if (/WALL|牆/i.test(name)) return { role: 'wall_rc', thk: thk || 15 };
+  if (/柱|COL/i.test(name) && !/編號|NO|TEXT|下層/i.test(name)) return { role: 'column' };
+  if (/樑|梁|BEAM/i.test(name) && !/編號|NO|TEXT/i.test(name)) return { role: 'beam' };
+  if (/門|DOOR|DR/i.test(name) && !/MARK|編號/i.test(name)) return { role: 'door' };
+  if (/窗|WIN|WD/i.test(name)) return { role: 'window' };
+  if (/欄杆|RAIL|女兒牆|PARAPET/i.test(name)) return { role: 'rail', thk: 10 };
+  return { role: 'ignore' };
+}
+
+/* ------------------------------------------------------------------ */
+/* 5. 空間類型                                                          */
+/* ------------------------------------------------------------------ */
+const ROOM_TYPES = [
+  { id: 'wet', name: '浴廁', re: /浴|廁|衛|盥洗|淋浴|WC|化妝室|洗手間|BATH|TOILET/i },
+  { id: 'kitchen', name: '廚房', re: /廚|KITCHEN/i },
+  { id: 'balcony', name: '陽台/露台', re: /陽台|露台|平台|曬衣|花台|BALCONY|TERRACE/i },
+  { id: 'public', name: '公共空間', re: /梯廳|電梯廳|走廊|走道|大廳|門廳|玄關|安全梯|樓梯|梯間|LOBBY|HALL|CORRIDOR|騎樓|通道/i },
+  { id: 'living', name: '居室', re: /客廳|餐廳|臥|起居|書房|和室|房間|多功能|儲藏|儲物|更衣|工作室|辦公|會議|店舖|店鋪|商場|LIVING|DINING|BED|ROOM|OFFICE|STORE/i },
+  { id: 'service', name: '機房/設備', re: /機房|機電|設備|配電|水箱|發電|垃圾|管道|車道|停車|PS|EPS|WPS|MECH/i },
+];
+function mergedType(r) {
+  const ts = (r.names || [r.name]).map(roomTypeOf).filter(Boolean);
+  if (!ts.length) return 'living';
+  if (ts.length > 1) for (const p of ['living', 'public', 'kitchen', 'wet', 'balcony', 'service']) if (ts.indexOf(p) >= 0) return p;
+  return ts[0];
+}
+function roomTypeOf(s) { for (const t of ROOM_TYPES) if (t.re.test(s)) return t.id; return null; }
+function isRoomLabel(s) {
+  if (!s || s.length > 12) return false;
+  if (/平面圖|單線圖|比例|A1|A3|=|＝|H=|cm|CM|kg|\d{2,}/.test(s)) return false;
+  return roomTypeOf(s) !== null;
+}
+
+/* 預設裝修設定(每種空間) */
+function defaultFinishes() {
+  return {
+    wet:     { floor: 'tile', floorTile: '30x30', wall: 'tile', wallTile: '30x60', tileH: 'ceil', ceil: 'none', label: '浴廁' },
+    kitchen: { floor: 'tile', floorTile: '60x60', wall: 'tile', wallTile: '30x60', tileH: 'ceil', ceil: 'paint', label: '廚房' },
+    balcony: { floor: 'tile', floorTile: '30x30', wall: 'none', wallTile: '', tileH: 0, ceil: 'paint', label: '陽台/露台' },
+    public:  { floor: 'tile', floorTile: '60x60', wall: 'paint', wallTile: '', tileH: 0, ceil: 'paint', label: '公共空間' },
+    living:  { floor: 'tile', floorTile: '60x60', wall: 'paint', wallTile: '', tileH: 0, ceil: 'paint', label: '居室' },
+    service: { floor: 'screed', floorTile: '', wall: 'paint', wallTile: '', tileH: 0, ceil: 'paint', label: '機房/設備' },
+  };
+}
+
+function defaultParams() {
+  return {
+    unitToCm: 1,          // 圖面單位換算成 cm
+    floorH: 320,          // 樓高 cm
+    slabT: 15,            // 版厚 cm
+    ceilH: 260,           // 天花板高 cm (油漆/壁磚用)
+    beamB: 40, beamD: 70, // 梁寬 / 梁深 cm (含版)
+    beamRatio: 0.30,      // 無梁線圖層時 m 梁 / m² 樓地板
+    doorH: 210, winH: 150, winSill: 90,
+    gapCm: 6,             // 閉合縫隙 (cm)
+    repeat: 1,
+    extWall: 'tile',      // 外牆: tile / paint / none
+    extTile: '4.5x9.5',   // 二丁掛等
+    rebar: { slab: 90, beam: 160, column: 200, wall: 100 }, // kg/m³
+    brickPerM2: { 12: 64, 24: 128 },
+    loss: { concrete: 2, rebar: 3, brick: 5, mortar: 5, tile: 5, paint: 0, form: 0 },
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* 6. 區域分析                                                          */
+/* ------------------------------------------------------------------ */
+function segIntersectBox(p, box) { return !(p.bb[2] < box[0] || p.bb[0] > box[2] || p.bb[3] < box[1] || p.bb[1] > box[3]); }
+
+function analyzeRegion(F, box, layerRoles, params, onProgress) {
+  // box: [x0,y0,x1,y1] 圖面單位。layerRoles: {layerName:{role,thk}}
+  const U = params.unitToCm;
+  const roleOf = F.layerNames.map(n => (layerRoles[n] || { role: 'ignore' }));
+  const inside = (x, y) => x >= box[0] && x <= box[2] && y >= box[1] && y <= box[3];
+  const polys = F.polys.filter(p => segIntersectBox(p, box));
+  const W = box[2] - box[0], H = box[3] - box[1];
+  // 像素尺寸:最長邊 ~2400px,且不小於 1cm
+  let px = Math.max(1 / U, Math.max(W, H) / 2400);
+  const nx = Math.ceil(W / px) + 2, ny = Math.ceil(H / px) + 2;
+  const N = nx * ny;
+  const bar = new Uint8Array(N);
+  const X = x => Math.floor((x - box[0]) / px) + 1;
+  const Y = y => Math.floor((y - box[1]) / px) + 1;
+  function line(x0, y0, x1, y1, M) {
+    let ax = X(x0), ay = Y(y0), bx = X(x1), by = Y(y1);
+    const dx = Math.abs(bx - ax), dy = Math.abs(by - ay), sx = ax < bx ? 1 : -1, sy = ay < by ? 1 : -1;
+    let err = dx - dy, guard = 0;
+    while (true) {
+      if (ax >= 0 && ay >= 0 && ax < nx && ay < ny) M[ay * nx + ax] = 1;
+      if (ax === bx && ay === by) break;
+      if (++guard > 20000) break;
+      const e2 = 2 * err;
+      if (e2 > -dy) { err -= dy; ax += sx; }
+      if (e2 < dx) { err += dx; ay += sy; }
+    }
+  }
+  const BARRIER = new Set(['wall_rc', 'wall_brick', 'wall_light', 'column', 'rail', 'boundary']);
+  // 門窗開口(圖塊)
+  const openings = detectOpenings(F, polys, roleOf, box, params);
+  const opIns = new Set(); for (const o of openings) opIns.add(o.id);
+  const inOpening = (p) => { let a = p.ins; while (a >= 0) { if (opIns.has(a)) return true; a = F.inserts[a].parent; } return false; };
+  const wallBar = new Uint8Array(N), railBar = new Uint8Array(N);
+  for (const p of polys) {
+    const r = roleOf[p.L].role;
+    const isOp = r === 'door' || r === 'window';
+    if (!BARRIER.has(r) && !isOp) continue;
+    // 門片、開門弧線也當邊界(防止門洞判斷失誤時漏接),事後再併回房間
+    const q = p.p;
+    for (let i = 0; i + 3 < q.length; i += 2) { line(q[i], q[i + 1], q[i + 2], q[i + 3], bar); if (r === 'rail') line(q[i], q[i + 1], q[i + 2], q[i + 3], railBar); else if (!isOp) line(q[i], q[i + 1], q[i + 2], q[i + 3], wallBar); }
+  }
+  const wallNear = (x, y, rad) => { const ix = X(x), iy = Y(y); for (let dy = -rad; dy <= rad; dy++) for (let dx = -rad; dx <= rad; dx++) { const xx = ix + dx, yy = iy + dy; if (xx >= 0 && yy >= 0 && xx < nx && yy < ny && wallBar[yy * nx + xx]) return true; } return false; };
+  const nearR = Math.max(2, Math.round(10 / U / px));
+  for (const o of openings) {
+    const c = o.box;
+    if (o.kind === 'window') { for (let i = 0; i < 4; i++) { const a = c[i], b = c[(i + 1) % 4]; line(a[0], a[1], b[0], b[1], bar); line(a[0], a[1], b[0], b[1], wallBar); } continue; }
+    // 門:只畫貼牆的那一邊(門洞),門扇擺動範圍算進房間
+    let best = -1, bi = -1;
+    for (let i = 0; i < 4; i++) {
+      const a = c[i], b = c[(i + 1) % 4];
+      const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      const sc = (wallNear(a[0], a[1], nearR) ? 1 : 0) + (wallNear(b[0], b[1], nearR) ? 1 : 0);
+      // 門洞那一邊:兩端靠牆、中段沒有牆
+      let mid = 0; for (const f of [0.3, 0.5, 0.7]) if (wallNear(a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, 1)) mid++;
+      const v = L - mid * 1e6;
+      if (sc === 2 && mid === 0 && v > best) { best = v; bi = i; }
+    }
+    if (bi < 0) { for (let i = 0; i < 4; i++) { const a = c[i], b = c[(i + 1) % 4]; line(a[0], a[1], b[0], b[1], bar); } o.chord = null; continue; }
+    const a = c[bi], b = c[(bi + 1) % 4];
+    line(a[0], a[1], b[0], b[1], bar); line(a[0], a[1], b[0], b[1], wallBar); o.chord = [a, b];
+  }
+  if (onProgress) onProgress(0.3);
+  // 膨脹(閉合縫隙)
+  const r = Math.max(1, Math.round(params.gapCm / U / px / 2));
+  const wall = dilate(bar, nx, ny, r);
+  const wallD = dilate(wallBar, nx, ny, r);
+  if (onProgress) onProgress(0.45);
+  // 外部
+  const lab = new Int32Array(N); // 0 未標, -1 外部, -2 牆, >0 房間
+  for (let i = 0; i < N; i++) if (wall[i]) lab[i] = -2;
+  floodFill(lab, nx, ny, [0], -1, 0);
+  // 房間標籤
+  const labels = F.texts.filter(t => inside(t.x, t.y) && isRoomLabel(t.s));
+  const rooms = [];
+  const footprintCount = (() => { let c = 0; for (let i = 0; i < N; i++) if (lab[i] !== -1) c++; return c; })();
+  for (const t of labels) {
+    let ix = X(t.x), iy = Y(t.y);
+    let seed = findFree(lab, nx, ny, ix, iy, Math.ceil(30 / U / px));
+    if (seed < 0) { rooms.push({ name: t.s, type: roomTypeOf(t.s), status: 'noseed', x: t.x, y: t.y }); continue; }
+    const v = lab[seed];
+    if (v > 0) { const rm = rooms.find(q => q.id === v); if (rm && rm.names.indexOf(t.s) < 0) rm.names.push(t.s); continue; }
+    if (v === -1) { rooms.push({ name: t.s, type: roomTypeOf(t.s), status: 'open', x: t.x, y: t.y }); continue; }
+    const id = rooms.length + 1;
+    let cnt = floodFill(lab, nx, ny, [seed], id, 0, Math.max(footprintCount * 0.6, 10));
+    // 標籤落在小封閉區(設備、門框內)時,往周圍找較大的區域
+    const minPx = 1.0e4 / ((px * U) * (px * U));
+    if (cnt > 0 && cnt < minPx) {
+      let done = false;
+      for (const dist of [25, 45, 70]) {
+        for (let k = 0; k < 16 && !done; k++) {
+          const ang = k * Math.PI / 8;
+          const sx = X(t.x + Math.cos(ang) * dist / U), sy = Y(t.y + Math.sin(ang) * dist / U);
+          if (sx < 0 || sy < 0 || sx >= nx || sy >= ny) continue;
+          const si = sy * nx + sx;
+          if (lab[si] !== 0) continue;
+          const c2 = floodFill(lab, nx, ny, [si], id, 0, Math.max(footprintCount * 0.6, 10));
+          if (c2 >= minPx) { cnt += c2; done = true; }
+          else { for (let i = 0; i < N; i++) if (lab[i] === id) lab[i] = 0; floodFill(lab, nx, ny, [seed], id, 0); }
+        }
+        if (done) break;
+      }
+      if (done) {
+        // 小區域併入(設備內部),保留
+      }
+    }
+    if (cnt < 0) { // 溢出:回復
+      for (let i = 0; i < N; i++) if (lab[i] === id) lab[i] = 0;
+      rooms.push({ id: -id, name: t.s, type: roomTypeOf(t.s), status: 'leak', x: t.x, y: t.y });
+      continue;
+    }
+    rooms.push({ id, name: t.s, names: [t.s], type: roomTypeOf(t.s), status: 'ok', x: t.x, y: t.y, count: cnt });
+  }
+  // 門扇範圍併回房間:門框內未標示的小區塊 + 門片線條像素
+  for (const o of openings) {
+    if (o.kind !== 'door') continue;
+    const c = o.box;
+    const xs = c.map(q => X(q[0])), ys = c.map(q => Y(q[1]));
+    const x0 = Math.max(0, Math.min(...xs) - r - 1), x1 = Math.min(nx - 1, Math.max(...xs) + r + 1);
+    const y0 = Math.max(0, Math.min(...ys) - r - 1), y1 = Math.min(ny - 1, Math.max(...ys) + r + 1);
+    for (let pass = 0; pass < 400; pass++) {
+      let changed = 0;
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        const i = y * nx + x;
+        const v = lab[i];
+        if (!(v === 0 || (v === -2 && !wallD[i]))) continue;
+        let best = 0;
+        const nb = [x > 0 ? lab[i - 1] : 0, x < nx - 1 ? lab[i + 1] : 0, y > 0 ? lab[i - nx] : 0, y < ny - 1 ? lab[i + nx] : 0];
+        for (const q of nb) if (q > 0) { best = q; break; }
+        if (best > 0 && rooms.some(rm => rm.id === best && rm.status === 'ok')) { lab[i] = best; changed++; }
+      }
+      if (!changed) break;
+    }
+  }
+  for (const rm of rooms) if (rm.status === 'ok') { let c = 0; for (let i = 0; i < N; i++) if (lab[i] === rm.id) c++; rm.count = c; }
+  if (onProgress) onProgress(0.7);
+  // 房間面積/周長
+  const cm2 = (px * U) * (px * U);
+  const okRooms = rooms.filter(r => r.status === 'ok');
+  const edgeCount = new Float64Array(rooms.length + 2);
+  for (const rm of okRooms) {
+    const loops = traceLoops(lab, nx, ny, rm.id);
+    let per = 0; const polysOut = [];
+    for (const lp of loops) {
+      const simp = dpSimplify(lp, 1.2);
+      let L = 0; for (let i = 0; i < simp.length; i++) { const a = simp[i], b = simp[(i + 1) % simp.length]; L += Math.hypot(a[0] - b[0], a[1] - b[1]); }
+      per += L;
+      polysOut.push(simp.map(q => [box[0] + (q[0] - 1) * px, box[1] + (q[1] - 1) * px]));
+    }
+    // 修正:膨脹造成的內縮 (r + 0.5 px)
+    const off = (r + 0.5) * px * U;
+    const perCm = per * px * U;
+    rm.area = (rm.count * cm2 + perCm * off) / 1e4;   // m²
+    rm.perim = (perCm + 8 * off) / 100;                // m
+    rm.outline = polysOut;
+  }
+  // 建築外框(footprint)
+  const fpLoops = traceLoops(lab, nx, ny, -1, true);
+  let extPer = 0; const fpOut = [];
+  let fpArea = 0;
+  for (const lp of fpLoops) {
+    const simp = dpSimplify(lp, 1.5);
+    let L = 0, A = 0;
+    for (let i = 0; i < simp.length; i++) { const a = simp[i], b = simp[(i + 1) % simp.length]; L += Math.hypot(a[0] - b[0], a[1] - b[1]); A += a[0] * b[1] - b[0] * a[1]; }
+    // 只取大圈(建築外圍),忽略微小殘留
+    if (Math.abs(A) / 2 * cm2 < 4e4) continue; // < 4 m²
+    extPer += L; fpArea += Math.abs(A) / 2;
+    fpOut.push(simp.map(q => [box[0] + (q[0] - 1) * px, box[1] + (q[1] - 1) * px]));
+  }
+  // 外框為「外部」區域的邊界,外部區域邊界包含整個框邊——剔除與框邊重合者
+  // traceLoops(-1, true) 只回傳外部與非外部的交界,不含畫布外緣。
+  const offE = (r + 0.5) * px * U;
+  // 外圍中屬於欄杆的比例
+  let wCnt = 0, rCnt = 0; const rr = r + 3;
+  for (let y = 1; y < ny - 1; y += 2) for (let x = 1; x < nx - 1; x += 2) {
+    const i = y * nx + x; if (lab[i] !== -1) continue;
+    if (lab[i - 1] === -1 && lab[i + 1] === -1 && lab[i - nx] === -1 && lab[i + nx] === -1) continue;
+    let hw = false, hr = false;
+    for (let dy = -rr; dy <= rr && !hw; dy++) for (let dx = -rr; dx <= rr; dx++) { const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= nx || yy >= ny) continue; const j = yy * nx + xx; if (wallBar[j]) { hw = true; break; } if (railBar[j]) hr = true; }
+    if (hw) wCnt++; else if (hr) rCnt++;
+  }
+  const railFrac = wCnt + rCnt ? rCnt / (wCnt + rCnt) : 0;
+  const footprint = { railFrac, area: (fpArea * cm2 - extPer * px * U * offE) / 1e4, perim: Math.max(0, extPer * px * U - 8 * offE) / 100, outline: fpOut };
+
+  // 牆長
+  const walls = wallLengths(polys, roleOf, U);
+  // 柱
+  const columns = detectColumns(F, polys, roleOf, U);
+  // 梁
+  let beamLen = 0; let beamFromLayer = false;
+  for (const p of polys) if (roleOf[p.L].role === 'beam') { const q = p.p; for (let i = 0; i + 3 < q.length; i += 2) beamLen += Math.hypot(q[i + 2] - q[i], q[i + 3] - q[i + 1]); }
+  if (beamLen > 0) { beamFromLayer = true; beamLen = beamLen * U / 2 / 100; }
+  // 開口分配到牆種、房間、外部
+  assignOpenings(openings, polys, roleOf, lab, nx, ny, px, box, U, rooms);
+  if (onProgress) onProgress(1);
+  return { box, px, nx, ny, lab, rooms, footprint, walls, columns, beamLen, beamFromLayer, openings, labelsFound: labels.length };
+}
+
+function dilate(src, nx, ny, r) {
+  // 方形結構元素,兩次一維掃描
+  const tmp = new Uint8Array(src.length), out = new Uint8Array(src.length);
+  for (let y = 0; y < ny; y++) {
+    let last = -1e9; const row = y * nx;
+    for (let x = 0; x < nx; x++) { if (src[row + x]) last = x; if (x - last <= r) tmp[row + x] = 1; }
+    last = 1e9;
+    for (let x = nx - 1; x >= 0; x--) { if (src[row + x]) last = x; if (last - x <= r) tmp[row + x] = 1; }
+  }
+  for (let x = 0; x < nx; x++) {
+    let last = -1e9;
+    for (let y = 0; y < ny; y++) { if (tmp[y * nx + x]) last = y; if (y - last <= r) out[y * nx + x] = 1; }
+    last = 1e9;
+    for (let y = ny - 1; y >= 0; y--) { if (tmp[y * nx + x]) last = y; if (last - y <= r) out[y * nx + x] = 1; }
+  }
+  return out;
+}
+
+function floodFill(lab, nx, ny, seeds, val, target, maxCount) {
+  const stack = new Int32Array(Math.max(1024, nx * ny >> 2));
+  let sp = 0, cnt = 0;
+  let st = stack;
+  for (const s of seeds) if (lab[s] === target) { lab[s] = val; st[sp++] = s; }
+  while (sp > 0) {
+    const i = st[--sp]; cnt++;
+    if (maxCount && cnt > maxCount) return -1;
+    const x = i % nx;
+    const nb = [x > 0 ? i - 1 : -1, x < nx - 1 ? i + 1 : -1, i >= nx ? i - nx : -1, i + nx < nx * ny ? i + nx : -1];
+    for (const j of nb) {
+      if (j >= 0 && lab[j] === target) {
+        lab[j] = val;
+        if (sp >= st.length) { const ns = new Int32Array(st.length * 2); ns.set(st); st = ns; }
+        st[sp++] = j;
+      }
+    }
+  }
+  // 邊界上的種子:外部填滿要從四周開始
+  return cnt;
+}
+
+function findFree(lab, nx, ny, ix, iy, rad) {
+  for (let d = 0; d <= rad; d++) {
+    for (let dy = -d; dy <= d; dy++) for (let dx = -d; dx <= d; dx++) {
+      if (Math.max(Math.abs(dx), Math.abs(dy)) !== d) continue;
+      const x = ix + dx, y = iy + dy;
+      if (x < 0 || y < 0 || x >= nx || y >= ny) continue;
+      const v = lab[y * nx + x];
+      if (v !== -2) return y * nx + x;
+    }
+  }
+  return -1;
+}
+
+/* 追蹤 label===id 區域的邊界(像素角點座標),回傳多個封閉迴圈 */
+function traceLoops(lab, nx, ny, id, outsideMode) {
+  // outsideMode: 追蹤 外部(-1) 與 非外部 的交界(只取 footprint 邊界)
+  const isIn = outsideMode ? (i => lab[i] !== -1) : (i => lab[i] === id);
+  // 有向邊:區域在左側。以頂點 (x,y) 為 key。
+  const next = new Map();
+  const key = (x, y) => y * (nx + 1) + x;
+  for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
+    const i = y * nx + x;
+    if (!isIn(i)) continue;
+    // 下邊 (y) : 若下方不在區域 -> 邊 (x,y)->(x+1,y)
+    if (y === 0 || !isIn(i - nx)) addE(next, key(x, y), key(x + 1, y));
+    if (x === nx - 1 || !isIn(i + 1)) addE(next, key(x + 1, y), key(x + 1, y + 1));
+    if (y === ny - 1 || !isIn(i + nx)) addE(next, key(x + 1, y + 1), key(x, y + 1));
+    if (x === 0 || !isIn(i - 1)) addE(next, key(x, y + 1), key(x, y));
+  }
+  function addE(m, a, b) { if (m.has(a)) { const v = m.get(a); if (Array.isArray(v)) v.push(b); else m.set(a, [v, b]); } else m.set(a, b); }
+  const loops = [];
+  const W1 = nx + 1;
+  while (next.size) {
+    const startK = next.keys().next().value;
+    let k = startK; const lp = [];
+    let guard = 0;
+    while (true) {
+      let v = next.get(k);
+      if (v === undefined) break;
+      let nk;
+      if (Array.isArray(v)) { nk = v.pop(); if (v.length === 1) next.set(k, v[0]); else if (v.length === 0) next.delete(k); }
+      else { nk = v; next.delete(k); }
+      lp.push([k % W1, Math.floor(k / W1)]);
+      k = nk;
+      if (k === startK || ++guard > 5e6) break;
+    }
+    if (lp.length >= 4) loops.push(lp);
+  }
+  return loops;
+}
+
+function dpSimplify(pts, eps) {
+  // 先去掉共線點
+  const P = [];
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[(i - 1 + pts.length) % pts.length], b = pts[i], c = pts[(i + 1) % pts.length];
+    if ((b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]) !== 0) P.push(b);
+  }
+  if (P.length < 4) return P.length ? P : pts;
+  // 封閉 DP:從最遠兩點切開
+  let i0 = 0, i1 = 0, best = -1;
+  for (let i = 0; i < P.length; i++) { const d = (P[i][0] - P[0][0]) ** 2 + (P[i][1] - P[0][1]) ** 2; if (d > best) { best = d; i1 = i; } }
+  const A = P.slice(i0, i1 + 1), B = P.slice(i1).concat([P[0]]);
+  const sa = dp(A, eps), sb = dp(B, eps);
+  return sa.slice(0, -1).concat(sb.slice(0, -1));
+}
+function dp(pts, eps) {
+  if (pts.length < 3) return pts;
+  const keep = new Uint8Array(pts.length); keep[0] = keep[pts.length - 1] = 1;
+  const st = [[0, pts.length - 1]];
+  while (st.length) {
+    const [s, e] = st.pop();
+    const ax = pts[s][0], ay = pts[s][1], bx = pts[e][0], by = pts[e][1];
+    const L = Math.hypot(bx - ax, by - ay) || 1;
+    let md = -1, mi = -1;
+    for (let i = s + 1; i < e; i++) { const d = Math.abs((bx - ax) * (ay - pts[i][1]) - (ax - pts[i][0]) * (by - ay)) / L; if (d > md) { md = d; mi = i; } }
+    if (md > eps) { keep[mi] = 1; st.push([s, mi], [mi, e]); }
+  }
+  return pts.filter((_, i) => keep[i]);
+}
+
+/* 牆長:各牆圖層線段總長 / 2(兩面線),去除牆頭短線 */
+function wallLengths(polys, roleOf, U) {
+  const res = {};
+  for (const p of polys) {
+    const ro = roleOf[p.L];
+    if (!ro.role.startsWith('wall_')) continue;
+    const thk = ro.thk || 15;
+    const key = ro.role + '|' + thk;
+    if (!res[key]) res[key] = { role: ro.role, thk, len: 0, raw: 0, layers: new Set() };
+    res[key].layers.add(p.L);
+    const q = p.p;
+    for (let i = 0; i + 3 < q.length; i += 2) {
+      const l = Math.hypot(q[i + 2] - q[i], q[i + 3] - q[i + 1]) * U;
+      res[key].raw += l;
+      if (l <= thk * 1.3) continue; // 牆頭
+      res[key].len += l;
+    }
+  }
+  for (const k in res) { res[k].len = res[k].len / 2 / 100; res[k].layers = [...res[k].layers]; }
+  return Object.values(res);
+}
+
+function polyArea(q) { let A = 0; for (let i = 0; i + 3 < q.length; i += 2) A += q[i] * q[i + 3] - q[i + 2] * q[i + 1]; const n = q.length; if (q[0] !== q[n - 2] || q[1] !== q[n - 1]) A += q[n - 2] * q[1] - q[0] * q[n - 1]; return Math.abs(A) / 2; }
+
+function detectColumns(F, polys, roleOf, U) {
+  // 柱:柱圖層上的封閉多邊形(去除重複),或柱圖層上的圖塊外框
+  const cands = [];
+  for (const p of polys) {
+    if (roleOf[p.L].role !== 'column') continue;
+    const q = p.p; const n = q.length;
+    const closed = p.c || (n >= 8 && Math.hypot(q[0] - q[n - 2], q[1] - q[n - 1]) < 1e-6);
+    if (!closed) continue;
+    const A = polyArea(q) * U * U;
+    if (A < 400 || A > 40000) continue; // 20x20 ~ 200x200 cm
+    const w = (p.bb[2] - p.bb[0]) * U, h = (p.bb[3] - p.bb[1]) * U;
+    cands.push({ cx: (p.bb[0] + p.bb[2]) / 2, cy: (p.bb[1] + p.bb[3]) / 2, A, P: perim(q) * U, w, h });
+  }
+  // 以中心點去重(取最大)
+  cands.sort((a, b) => b.A - a.A);
+  const out = [];
+  for (const c of cands) {
+    if (out.some(o => Math.hypot(o.cx - c.cx, o.cy - c.cy) * U < 15 || (Math.abs(o.cx - c.cx) * U < o.w / 2 && Math.abs(o.cy - c.cy) * U < o.h / 2))) continue;
+    out.push(c);
+  }
+  return out;
+}
+function perim(q) { let L = 0; for (let i = 0; i + 3 < q.length; i += 2) L += Math.hypot(q[i + 2] - q[i], q[i + 3] - q[i + 1]); return L; }
+
+/* 門窗:以「最內層圖塊」中大部分線條屬於 門/窗 圖層者為開口 */
+function detectOpenings(F, polys, roleOf, box, params) {
+  const U = params.unitToCm;
+  const acc = new Map(); // insId -> {door, window, total}
+  for (const p of polys) {
+    if (p.ins < 0) continue;
+    const r = roleOf[p.L].role;
+    let a = acc.get(p.ins); if (!a) { a = { door: 0, window: 0, total: 0 }; acc.set(p.ins, a); }
+    const l = perim(p.p);
+    a.total += l; if (r === 'door') a.door += l; else if (r === 'window') a.window += l;
+  }
+  // 圖塊本身所在圖層也算
+  const res = [];
+  const used = new Set();
+  // 從內往外:深度大的優先
+  const ids = [...acc.keys()].sort((a, b) => F.inserts[b].depth - F.inserts[a].depth);
+  for (const id of ids) {
+    const ins = F.inserts[id];
+    if (!ins.box) continue;
+    const a = acc.get(id);
+    let kind = null;
+    const ir = roleOf[ins.L].role;
+    if (a.door > 0.5 * a.total || (ir === 'door' && a.door + a.window < 0.5 * a.total && a.total > 0 && a.door >= a.window)) kind = 'door';
+    if (a.window > 0.5 * a.total || (ir === 'window' && a.window >= a.door && a.total > 0 && !kind)) kind = 'window';
+    if (!kind) continue;
+    const w = Math.max(ins.w, ins.h) * U, d = Math.min(ins.w, ins.h) * U;
+    if (w < 40 || w > 600) continue;
+    // 祖先已列入者不重複
+    let anc = ins.parent, skip = false;
+    while (anc >= 0) { if (used.has(anc)) { skip = true; break; } anc = F.inserts[anc].parent; }
+    if (skip) continue;
+    // 子孫已列入者:本圖塊為外層,跳過
+    const cx = (ins.box[0][0] + ins.box[2][0]) / 2, cy = (ins.box[0][1] + ins.box[2][1]) / 2;
+    if (cx < box[0] || cx > box[2] || cy < box[1] || cy > box[3]) continue;
+    if (res.some(o => Math.hypot(o.cx - cx, o.cy - cy) * U < 10)) continue;
+    used.add(id);
+    // 門寬:門片圖塊的外框為 w x w (含開門弧),寬度取長邊
+    res.push({ kind, w, d, cx, cy, box: ins.box, name: ins.name, id });
+  }
+  return res;
+}
+
+function assignOpenings(openings, polys, roleOf, lab, nx, ny, px, box, U, rooms) {
+  // 牆線格網索引
+  const cell = 100 / U;
+  const grid = new Map();
+  for (const p of polys) {
+    const ro = roleOf[p.L]; if (!ro.role.startsWith('wall_')) continue;
+    const q = p.p;
+    for (let i = 0; i + 3 < q.length; i += 2) {
+      const gx0 = Math.floor(Math.min(q[i], q[i + 2]) / cell), gx1 = Math.floor(Math.max(q[i], q[i + 2]) / cell);
+      const gy0 = Math.floor(Math.min(q[i + 1], q[i + 3]) / cell), gy1 = Math.floor(Math.max(q[i + 1], q[i + 3]) / cell);
+      if ((gx1 - gx0 + 1) * (gy1 - gy0 + 1) > 400) continue;
+      for (let gx = gx0; gx <= gx1; gx++) for (let gy = gy0; gy <= gy1; gy++) { const k = gx + ',' + gy; if (!grid.has(k)) grid.set(k, []); grid.get(k).push([q[i], q[i + 1], q[i + 2], q[i + 3], ro]); }
+    }
+  }
+  const roomById = new Map(rooms.filter(r => r.status === 'ok').map(r => [r.id, r]));
+  for (const o of openings) {
+    // 最近牆線
+    let best = Infinity, bro = null;
+    const gx = Math.floor(o.cx / cell), gy = Math.floor(o.cy / cell);
+    // 以開口兩端點為準(門寬方向)
+    const c = o.box;
+    const e1 = Math.hypot(c[1][0] - c[0][0], c[1][1] - c[0][1]), e2 = Math.hypot(c[3][0] - c[0][0], c[3][1] - c[0][1]);
+    const pts = [[o.cx, o.cy], ...c];
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+      const arr = grid.get((gx + dx) + ',' + (gy + dy)); if (!arr) continue;
+      for (const s of arr) for (const p of pts) { const d = pointSeg(p[0], p[1], s); if (d < best) { best = d; bro = s[4]; } }
+    }
+    o.wall = bro && best * U < 80 ? bro : null;
+    // 相鄰房間 / 外部:取開口外框外擴一圈的像素
+    const ids = new Map(); let outside = 0;
+    const minx = Math.min(...c.map(q => q[0])), maxx = Math.max(...c.map(q => q[0])), miny = Math.min(...c.map(q => q[1])), maxy = Math.max(...c.map(q => q[1]));
+    const pad = 40 / U;
+    const step = Math.max(px, 5 / U);
+    for (let x = minx - pad; x <= maxx + pad; x += step) for (let y = miny - pad; y <= maxy + pad; y += step) {
+      if (x > minx && x < maxx && y > miny && y < maxy) continue;
+      const ix = Math.floor((x - box[0]) / px) + 1, iy = Math.floor((y - box[1]) / px) + 1;
+      if (ix < 0 || iy < 0 || ix >= nx || iy >= ny) continue;
+      const v = lab[iy * nx + ix];
+      if (v > 0) ids.set(v, (ids.get(v) || 0) + 1); else if (v === -1) outside++;
+    }
+    const sorted = [...ids.entries()].sort((a, b) => b[1] - a[1]);
+    o.rooms = sorted.slice(0, 2).map(e => e[0]).filter(id => roomById.has(id));
+    o.exterior = outside > 2 && o.rooms.length <= 1;
+  }
+}
+function pointSeg(px, py, s) { const [ax, ay, bx, by] = s; const dx = bx - ax, dy = by - ay; const L2 = dx * dx + dy * dy || 1; let t = ((px - ax) * dx + (py - ay) * dy) / L2; t = Math.max(0, Math.min(1, t)); return Math.hypot(ax + t * dx - px, ay + t * dy - py); }
+
+/* ------------------------------------------------------------------ */
+/* 7. 數量計算                                                          */
+/* ------------------------------------------------------------------ */
+function tileArea(spec) { const m = /([\d.]+)\s*[x×*]\s*([\d.]+)/i.exec(spec || ''); return m ? parseFloat(m[1]) * parseFloat(m[2]) / 1e4 : 0; }
+
+function computeQuantities(A, params, finishes, roomOverrides) {
+  const P = params;
+  const H = P.floorH / 100, t = P.slabT / 100, Hc = P.ceilH / 100;
+  const Hw = H - t; // 牆淨高(至版底)
+  const items = []; // {trade, item, unit, qty, lossKey, note}
+  const add = (trade, item, unit, qty, lossKey, note) => { if (qty > 1e-6) items.push({ trade, item, unit, qty, lossKey, note: note || '' }); };
+  const ov = roomOverrides || {};
+  const rooms = A.rooms.filter(r => r.status === 'ok' && !(ov[r.id] && ov[r.id].exclude)).map(r => ({ ...r, type: (ov[r.id] && ov[r.id].type) || mergedType(r) }));
+  const floorArea = A.footprint.area;
+  // ---- 結構 ----
+  const slabV = floorArea * t;
+  let beamL = A.beamFromLayer ? A.beamLen : floorArea * P.beamRatio;
+  const bB = P.beamB / 100, bD = P.beamD / 100;
+  const beamV = beamL * bB * Math.max(0, bD - t);
+  let colA = 0, colP = 0; for (const c of A.columns) { colA += c.A / 1e4; colP += c.P / 100; }
+  const colV = colA * Hw;
+  // 牆 (含開口上下方補回)
+  const wallInfo = A.walls.map(w => ({ ...w, area: w.len * Hw }));
+  for (const o of A.openings) {
+    if (!o.wall) continue;
+    const wi = wallInfo.find(w => w.role === o.wall.role && w.thk === (o.wall.thk || 15));
+    if (!wi) continue;
+    const h = o.kind === 'door' ? P.doorH / 100 : P.winH / 100;
+    wi.area += (o.w / 100) * Math.max(0, Hw - h);
+  }
+  let rcWallV = 0, rcWallA = 0;
+  for (const w of wallInfo) if (w.role === 'wall_rc') { rcWallV += w.area * w.thk / 100; rcWallA += w.area; }
+  add('結構', '混凝土 — 樓板', 'm³', slabV, 'concrete', `樓地板 ${floorArea.toFixed(2)} m² × 版厚 ${P.slabT} cm`);
+  add('結構', '混凝土 — 梁', 'm³', beamV, 'concrete', `${A.beamFromLayer ? '梁線' : '估算'} ${beamL.toFixed(1)} m × ${P.beamB}×(${P.beamD}-${P.slabT}) cm`);
+  add('結構', '混凝土 — 柱', 'm³', colV, 'concrete', `${A.columns.length} 支,斷面合計 ${colA.toFixed(2)} m² × ${Hw.toFixed(2)} m`);
+  add('結構', '混凝土 — RC牆', 'm³', rcWallV, 'concrete', wallInfo.filter(w => w.role === 'wall_rc').map(w => `${w.thk}cm 牆長 ${w.len.toFixed(1)} m`).join(','));
+  const concTotal = slabV + beamV + colV + rcWallV;
+  add('結構', '混凝土 — 小計', 'm³', concTotal, 'concrete', '');
+  const formSlab = floorArea, formBeam = beamL * (bB + 2 * Math.max(0, bD - t)), formCol = colP * Hw, formWall = rcWallA * 2;
+  add('結構', '模板 — 樓板底', 'm²', formSlab, 'form');
+  add('結構', '模板 — 梁', 'm²', formBeam, 'form', '梁底 + 兩側');
+  add('結構', '模板 — 柱', 'm²', formCol, 'form', `柱周長合計 ${colP.toFixed(1)} m`);
+  add('結構', '模板 — RC牆', 'm²', formWall, 'form', '雙面');
+  add('結構', '模板 — 小計', 'm²', formSlab + formBeam + formCol + formWall, 'form');
+  const rb = P.rebar;
+  const steel = (slabV * rb.slab + beamV * rb.beam + colV * rb.column + rcWallV * rb.wall) / 1000;
+  add('結構', '鋼筋', 't', steel, 'rebar', `依含筋率 版${rb.slab}/梁${rb.beam}/柱${rb.column}/牆${rb.wall} kg/m³`);
+  // ---- 泥作 ----
+  for (const w of wallInfo) if (w.role === 'wall_brick') {
+    const per = P.brickPerM2[w.thk] || (w.thk >= 20 ? 128 : 64);
+    add('泥作', `砌磚牆 ${w.thk >= 20 ? '1B' : '1/2B'} (${w.thk}cm)`, 'm²', w.area, 'brick', `牆長 ${w.len.toFixed(1)} m × ${Hw.toFixed(2)} m`);
+    add('泥作', `紅磚 ${w.thk >= 20 ? '1B' : '1/2B'}`, '塊', w.area * per, 'brick', `${per} 塊/m²`);
+  }
+  for (const w of wallInfo) if (w.role === 'wall_light') add('泥作', `輕隔間牆 (${w.thk}cm)`, 'm²', w.area, 'brick', `牆長 ${w.len.toFixed(1)} m`);
+  // 房間牆面 / 地坪 / 天花
+  let paintWall = 0, paintCeil = 0, tileFloor = {}, tileWall = {}, screedFloor = 0, plasterWall = 0, baseWall = 0, baseFloor = 0, woodFloor = 0;
+  const roomDetail = [];
+  for (const rm of rooms) {
+    const f = finishes[rm.type] || finishes.living;
+    const ops = A.openings.filter(o => o.rooms && o.rooms.indexOf(rm.id) >= 0);
+    const Ht = f.wall === 'tile' ? (f.tileH === 'ceil' ? Hc : (parseFloat(f.tileH) || 0) / 100) : 0;
+    const dedTo = (top) => { let s = 0; for (const o of ops) { const b = o.kind === 'door' ? 0 : P.winSill / 100; const h = o.kind === 'door' ? P.doorH / 100 : P.winH / 100; s += (o.w / 100) * Math.max(0, Math.min(top, b + h) - Math.min(top, b)); } return s; };
+    const wallGrossC = rm.perim * Hc;
+    let wTile = 0, wPaint = 0;
+    if (f.wall === 'tile') { wTile = Math.max(0, rm.perim * Ht - dedTo(Ht)); wPaint = Math.max(0, rm.perim * (Hc - Ht) - (dedTo(Hc) - dedTo(Ht))); }
+    else if (f.wall === 'paint') wPaint = Math.max(0, wallGrossC - dedTo(Hc));
+    const plaster = Math.max(0, rm.perim * Hw - dedTo(Hw));
+    if (f.wall !== 'none') { plasterWall += Math.max(0, plaster - wTile); baseWall += wTile; }
+    paintWall += wPaint;
+    if (wTile > 0) tileWall[f.wallTile] = (tileWall[f.wallTile] || 0) + wTile;
+    if (f.floor === 'tile') { tileFloor[f.floorTile] = (tileFloor[f.floorTile] || 0) + rm.area; baseFloor += rm.area; }
+    else if (f.floor === 'wood') { woodFloor += rm.area; screedFloor += rm.area; }
+    else if (f.floor === 'screed') screedFloor += rm.area;
+    if (f.ceil === 'paint') paintCeil += rm.area;
+    roomDetail.push({ id: rm.id, name: rm.name, type: rm.type, area: rm.area, perim: rm.perim, wallTile: wTile, wallPaint: wPaint, ceilPaint: f.ceil === 'paint' ? rm.area : 0, floor: f.floor === 'tile' ? f.floorTile + ' 磁磚' : f.floor === 'wood' ? '木地板' : f.floor === 'screed' ? '粉光' : '—', openings: ops.length });
+  }
+  // 外牆
+  const extOps = A.openings.filter(o => o.exterior);
+  let extOpenA = 0; for (const o of extOps) extOpenA += (o.w / 100) * (o.kind === 'door' ? P.doorH / 100 : P.winH / 100);
+  const railF = A.footprint.railFrac || 0;
+  const extWallLen = A.footprint.perim * (1 - railF);
+  const extWallA = Math.max(0, extWallLen * H - extOpenA);
+  if (railF > 0) add('其他', '陽台欄杆/矮牆(外圍)', 'm', A.footprint.perim * railF, 'form', '外圍周長中屬欄杆部分');
+  add('泥作', '外牆 1:3 水泥砂漿打底', 'm²', extWallA, 'mortar', `外牆長 ${extWallLen.toFixed(1)} m × 樓高 ${H} m − 外牆開口 ${extOpenA.toFixed(1)} m²`);
+  add('泥作', '內牆 1:3 水泥砂漿粉刷(油漆面)', 'm²', plasterWall, 'mortar', '至版底,扣門窗');
+  add('泥作', '內牆 1:3 水泥砂漿打底(貼磚面)', 'm²', baseWall, 'mortar');
+  add('泥作', '地坪 1:3 水泥砂漿打底(貼磚)', 'm²', baseFloor, 'mortar');
+  add('泥作', '地坪 水泥砂漿粉光', 'm²', screedFloor, 'mortar', woodFloor ? `含木地板區 ${woodFloor.toFixed(1)} m²` : '');
+  // ---- 磁磚 ----
+  for (const k in tileFloor) { add('磁磚', `地磚 ${k} cm`, 'm²', tileFloor[k], 'tile'); const ta = tileArea(k); if (ta) add('磁磚', `地磚 ${k} cm 片數`, '片', tileFloor[k] / ta, 'tile'); }
+  for (const k in tileWall) { add('磁磚', `壁磚 ${k} cm`, 'm²', tileWall[k], 'tile'); const ta = tileArea(k); if (ta) add('磁磚', `壁磚 ${k} cm 片數`, '片', tileWall[k] / ta, 'tile'); }
+  if (P.extWall === 'tile') add('磁磚', `外牆磚 ${P.extTile} cm`, 'm²', extWallA, 'tile');
+  // ---- 油漆 ----
+  add('油漆', '內牆 水泥漆/乳膠漆', 'm²', paintWall, 'paint', '至天花板高,扣門窗');
+  add('油漆', '天花板 平頂漆', 'm²', paintCeil, 'paint');
+  if (P.extWall === 'paint') add('油漆', '外牆 塗料', 'm²', extWallA, 'paint');
+  if (woodFloor) add('其他', '木地板', 'm²', woodFloor, 'tile');
+  // 依工種排序
+  const TO = ['結構', '泥作', '磁磚', '油漆', '其他'];
+  items.sort((a, b) => TO.indexOf(a.trade) - TO.indexOf(b.trade));
+  // 損耗
+  for (const it of items) { const l = P.loss[it.lossKey] || 0; it.loss = l; it.total = it.qty * (1 + l / 100); }
+  return { items, roomDetail, summary: { floorArea, extPerim: A.footprint.perim, rooms: rooms.length, openings: A.openings.length, columns: A.columns.length } };
+}
+
+/* ------------------------------------------------------------------ */
+/* 8. 簡易 XLSX 產生器 (無外部函式庫)                                    */
+/* ------------------------------------------------------------------ */
+const CRC_T = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(b) { let c = 0xFFFFFFFF; for (let i = 0; i < b.length; i++) c = CRC_T[(c ^ b[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+function zipStore(files) {
+  const enc = new TextEncoder();
+  const parts = [], central = [];
+  let off = 0;
+  for (const f of files) {
+    const name = enc.encode(f.name), data = typeof f.data === 'string' ? enc.encode(f.data) : f.data;
+    const crc = crc32(data);
+    const h = new DataView(new ArrayBuffer(30));
+    h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint16(8, 0, true);
+    h.setUint16(10, 0, true); h.setUint16(12, 0x21, true); h.setUint32(14, crc, true); h.setUint32(18, data.length, true); h.setUint32(22, data.length, true);
+    h.setUint16(26, name.length, true); h.setUint16(28, 0, true);
+    parts.push(new Uint8Array(h.buffer), name, data);
+    const c = new DataView(new ArrayBuffer(46));
+    c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true); c.setUint16(10, 0, true);
+    c.setUint16(12, 0, true); c.setUint16(14, 0x21, true); c.setUint32(16, crc, true); c.setUint32(20, data.length, true); c.setUint32(24, data.length, true);
+    c.setUint16(28, name.length, true); c.setUint32(42, off, true);
+    central.push(new Uint8Array(c.buffer), name);
+    off += 30 + name.length + data.length;
+  }
+  let csz = 0; for (const c of central) csz += c.length;
+  const e = new DataView(new ArrayBuffer(22));
+  e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true); e.setUint32(12, csz, true); e.setUint32(16, off, true);
+  const all = [...parts, ...central, new Uint8Array(e.buffer)];
+  let n = 0; for (const a of all) n += a.length;
+  const out = new Uint8Array(n); let p = 0; for (const a of all) { out.set(a, p); p += a.length; }
+  return out;
+}
+function xmlEsc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ''); }
+function colName(i) { let s = ''; i++; while (i > 0) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; }
+/* sheets: [{name, rows:[[cell,...]], widths:[...], header:true}] cell: string|number|{v, s:styleIdx} */
+function buildXLSX(sheets) {
+  const files = [];
+  files.push({ name: '[Content_Types].xml', data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' + sheets.map((s, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('') + '</Types>' });
+  files.push({ name: '_rels/.rels', data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>' });
+  files.push({ name: 'xl/workbook.xml', data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>' + sheets.map((s, i) => `<sheet name="${xmlEsc(s.name.slice(0, 31))}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('') + '</sheets></workbook>' });
+  files.push({ name: 'xl/_rels/workbook.xml.rels', data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + sheets.map((s, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('') + `<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>` });
+  // 樣式: 0 一般, 1 表頭(粗體灰底), 2 數字 #,##0.00, 3 粗體, 4 粗體數字
+  files.push({ name: 'xl/styles.xml', data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="1"><numFmt numFmtId="164" formatCode="#,##0.00"/></numFmts><fonts count="3"><font><sz val="11"/><name val="Microsoft JhengHei"/></font><font><b/><sz val="11"/><name val="Microsoft JhengHei"/></font><font><b/><sz val="14"/><name val="Microsoft JhengHei"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE8EEF4"/></patternFill></fill></fills><borders count="2"><border/><border><left style="thin"><color rgb="FFBFBFBF"/></left><right style="thin"><color rgb="FFBFBFBF"/></right><top style="thin"><color rgb="FFBFBFBF"/></top><bottom style="thin"><color rgb="FFBFBFBF"/></bottom></border></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs count="6"><xf fontId="0" borderId="1" applyBorder="1"/><xf fontId="1" fillId="2" borderId="1" applyFont="1" applyFill="1" applyBorder="1"/><xf fontId="0" numFmtId="164" borderId="1" applyNumberFormat="1" applyBorder="1"/><xf fontId="1" borderId="1" applyFont="1" applyBorder="1"/><xf fontId="1" numFmtId="164" borderId="1" applyFont="1" applyNumberFormat="1" applyBorder="1"/><xf fontId="2" applyFont="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>' });
+  sheets.forEach((s, si) => {
+    let x = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">';
+    if (s.freeze) x += `<sheetViews><sheetView workbookViewId="0"><pane ySplit="${s.freeze}" topLeftCell="A${s.freeze + 1}" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>`;
+    if (s.widths) x += '<cols>' + s.widths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('') + '</cols>';
+    x += '<sheetData>';
+    s.rows.forEach((row, ri) => {
+      x += `<row r="${ri + 1}">`;
+      row.forEach((cell, ci) => {
+        if (cell === null || cell === undefined || cell === '') return;
+        const ref = colName(ci) + (ri + 1);
+        let v = cell, st = null;
+        if (typeof cell === 'object') { v = cell.v; st = cell.s; }
+        if (typeof v === 'number' && isFinite(v)) x += `<c r="${ref}" s="${st != null ? st : 2}"><v>${Math.round(v * 1e6) / 1e6}</v></c>`;
+        else x += `<c r="${ref}" t="inlineStr" s="${st != null ? st : 0}"><is><t xml:space="preserve">${xmlEsc(v)}</t></is></c>`;
+      });
+      x += '</row>';
+    });
+    x += '</sheetData></worksheet>';
+    files.push({ name: `xl/worksheets/sheet${si + 1}.xml`, data: x });
+  });
+  return zipStore(files);
+}
+
+/* 由圖名自動找平面圖範圍 */
+const CN = { 零: 0, 一: 1, 二: 2, 兩: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
+function cnNum(s) {
+  if (/^\d+$/.test(s)) return parseInt(s);
+  let v = 0, cur = 0;
+  for (const ch of s) { const d = CN[ch]; if (d === undefined) return NaN; if (d === 10) { v += (cur || 1) * 10; cur = 0; } else cur = d; }
+  return v + cur;
+}
+function floorRepeat(title) {
+  const m = /([\d一二三四五六七八九十]+)\s*[至~\-~到]\s*([\d一二三四五六七八九十]+)\s*[層樓F]/.exec(title);
+  if (m) { const a = cnNum(m[1]), b = cnNum(m[2]); if (b >= a) return b - a + 1; }
+  const m2 = /([\d一二三四五六七八九十]+)\s*[、,,及]\s*([\d一二三四五六七八九十]+)\s*[層樓F]/.exec(title);
+  if (m2) return 2;
+  return 1;
+}
+function findPlanTitles(F) {
+  const ts = F.texts.filter(t => /平面圖/.test(t.s) && t.s.length <= 16 && !/、|,|及|結構|面積|單線|天花|反射|配置|陰影|日照|檢討|無障礙|台電|配電/.test(t.s));
+  // 同一位置重複者去除
+  const out = [];
+  for (const t of ts.sort((a, b) => b.h - a.h)) {
+    if (out.some(o => o.s === t.s && Math.hypot(o.x - t.x, o.y - t.y) < t.h * 5)) continue;
+    out.push(t);
+  }
+  return out.map(t => ({ title: t.s, x: t.x, y: t.y, h: t.h, repeat: floorRepeat(t.s) }));
+}
+function planBoxNearTitle(F, t, layerRoles, opt) {
+  opt = opt || {};
+  const h = t.h || 100;
+  const win = [t.x - (opt.wx || 30) * h, t.y - 5 * h, t.x + (opt.wx || 30) * h, t.y + (opt.wy || 45) * h];
+  const isWall = F.layerNames.map(n => { const r = (layerRoles[n] || guessRole(n)).role; return opt.members ? opt.members.indexOf(r) >= 0 : (r.startsWith('wall_') || r === 'column' || r === 'rail'); });
+  const cand = F.polys.filter(p => isWall[p.L] && p.bb[0] >= win[0] && p.bb[2] <= win[2] && p.bb[1] >= win[1] && p.bb[3] <= win[3]);
+  if (!cand.length) return null;
+  // 從圖名上方最近的牆開始,逐步併入相鄰圖元
+  const target = [t.x, t.y + 8 * h];
+  let best = null, bd = Infinity;
+  for (const p of cand) { const cx = (p.bb[0] + p.bb[2]) / 2, cy = (p.bb[1] + p.bb[3]) / 2; if (cy < t.y) continue; const d = Math.hypot(cx - target[0], cy - target[1]); if (d < bd) { bd = d; best = p; } }
+  if (!best) return null;
+  let bb = best.bb.slice();
+  const gap = (opt.gap || 3) * h;
+  let used = new Uint8Array(cand.length);
+  let changed = true, guard = 0;
+  while (changed && guard++ < 60) {
+    changed = false;
+    for (let i = 0; i < cand.length; i++) {
+      if (used[i]) continue; const q = cand[i].bb;
+      if (q[0] > bb[2] + gap || q[2] < bb[0] - gap || q[1] > bb[3] + gap || q[3] < bb[1] - gap) continue;
+      used[i] = 1; bb = [Math.min(bb[0], q[0]), Math.min(bb[1], q[1]), Math.max(bb[2], q[2]), Math.max(bb[3], q[3])]; changed = true;
+    }
+  }
+  const m = 1.5 * h;
+  return [bb[0] - m, bb[1] - m, bb[2] + m, bb[3] + m];
+}
+function detectUnit(F, insunits) {
+  // 以門圖塊寬度中位數判斷(門寬約 70~120 cm)
+  const doorL = new Set(); F.layerNames.forEach((n, i) => { if (guessRole(n).role === 'door') doorL.add(i); });
+  const ws = [];
+  for (const ins of F.inserts) if (doorL.has(ins.L) && ins.box) { const w = Math.max(ins.w, ins.h); if (w > 0) ws.push(w); }
+  if (ws.length >= 3) {
+    ws.sort((a, b) => a - b); const m = ws[ws.length >> 1];
+    if (m > 400 && m < 2000) return { unitToCm: 0.1, why: '門寬約 ' + Math.round(m) + ' 單位 → mm' };
+    if (m > 40 && m < 200) return { unitToCm: 1, why: '門寬約 ' + Math.round(m) + ' 單位 → cm' };
+    if (m > 0.4 && m < 2) return { unitToCm: 100, why: '門寬約 ' + m.toFixed(2) + ' 單位 → m' };
+  }
+  const map = { 4: 0.1, 5: 1, 6: 100, 1: 2.54, 2: 30.48 };
+  if (map[insunits]) return { unitToCm: map[insunits], why: '依檔案單位設定' };
+  return { unitToCm: 1, why: '無法判斷,預設 cm' };
+}
+
+/* ------------------------------------------------------------------ */
+/* 9. 立面分析                                                          */
+/* ------------------------------------------------------------------ */
+const EROLES = { ignore: '忽略', outline: '外牆輪廓', opening: '開口(門窗)', rail: '欄杆/透空', material: '材料填充' };
+function guessElevRole(name, hasHatch) {
+  const r = guessRole(name).role;
+  if (hasHatch && /磚|石|丁掛|塗|漆|材|面|EH|洗石|抿石|板|TILE|STONE|PAINT/i.test(name) && !/窗|門|WIN|DOOR|玻璃/i.test(name)) return { role: 'material' };
+  if (r === 'window' || r === 'door' || /鋁門窗|帷幕|玻璃(?!欄)/.test(name)) return { role: 'opening' };
+  if (r === 'rail' || /欄杆|格柵|百葉|透空/.test(name)) return { role: 'rail' };
+  if (r.startsWith('wall_') || r === 'column' || /ELEV|立面線|外牆|輪廓|OUTLINE/i.test(name)) return { role: 'outline' };
+  return { role: 'ignore' };
+}
+function materialName(layer) {
+  return layer.replace(/^[\dA-Z]{0,3}[-_ ]*(EH|E|A|ID)?[-_ ]*/i, '').replace(/^[-_ ]+/, '') || layer;
+}
+function guessTileSize(name) {
+  if (/二丁掛/.test(name)) return '22.7x6';
+  if (/小口/.test(name)) return '10.8x6';
+  if (/丁掛/.test(name)) return '22.7x6';
+  if (/馬賽克|馬賽克/.test(name)) return '';
+  return '';
+}
+function fillPolyRaster(M, nx, ny, loops, X, Y, val, mask) {
+  // 偶奇規則掃描線填色;loops 為世界座標
+  const edges = [];
+  let ymin = Infinity, ymax = -Infinity;
+  for (const lp of loops) {
+    const n = lp.length;
+    for (let i = 0; i < n; i += 2) {
+      const j = (i + 2) % n;
+      const x1 = X(lp[i]), y1 = Y(lp[i + 1]), x2 = X(lp[j]), y2 = Y(lp[j + 1]);
+      if (y1 === y2) continue;
+      edges.push([x1, y1, x2, y2]);
+      ymin = Math.min(ymin, y1, y2); ymax = Math.max(ymax, y1, y2);
+    }
+  }
+  ymin = Math.max(0, Math.floor(ymin)); ymax = Math.min(ny - 1, Math.ceil(ymax));
+  const xs = [];
+  for (let y = ymin; y <= ymax; y++) {
+    const yc = y + 0.5; xs.length = 0;
+    for (const e of edges) {
+      const [x1, y1, x2, y2] = e;
+      if ((yc >= y1 && yc < y2) || (yc >= y2 && yc < y1)) xs.push(x1 + (yc - y1) * (x2 - x1) / (y2 - y1));
+    }
+    xs.sort((a, b) => a - b);
+    for (let k = 0; k + 1 < xs.length; k += 2) {
+      const a = Math.max(0, Math.ceil(xs[k] - 0.5)), b = Math.min(nx - 1, Math.floor(xs[k + 1] - 0.5));
+      for (let x = a; x <= b; x++) { const i = y * nx + x; if (!mask || mask[i]) M[i] = val; }
+    }
+  }
+}
+function analyzeElevation(F, box, eroles, params, zones, defaultMat) {
+  const U = params.unitToCm;
+  const roleOf = F.layerNames.map(n => (eroles[n] || { role: 'ignore' }).role);
+  const W = box[2] - box[0], H = box[3] - box[1];
+  const px = Math.max(1 / U, Math.max(W, H) / 2400);
+  const nx = Math.ceil(W / px) + 2, ny = Math.ceil(H / px) + 2, N = nx * ny;
+  const X = x => (x - box[0]) / px + 1, Y = y => (y - box[1]) / px + 1;
+  const XI = x => Math.floor(X(x)), YI = y => Math.floor(Y(y));
+  const polys = F.polys.filter(p => !(p.bb[2] < box[0] || p.bb[0] > box[2] || p.bb[3] < box[1] || p.bb[1] > box[3]));
+  const outl = new Uint8Array(N), openL = new Uint8Array(N); // openL: 1 門窗線, 2 欄杆線
+  function line(x0, y0, x1, y1, M, v) {
+    let ax = XI(x0), ay = YI(y0), bx = XI(x1), by = YI(y1);
+    const dx = Math.abs(bx - ax), dy = Math.abs(by - ay), sx = ax < bx ? 1 : -1, sy = ay < by ? 1 : -1;
+    let err = dx - dy, guard = 0;
+    while (true) {
+      if (ax >= 0 && ay >= 0 && ax < nx && ay < ny) M[ay * nx + ax] = v;
+      if (ax === bx && ay === by) break;
+      if (++guard > 20000) break;
+      const e2 = 2 * err; if (e2 > -dy) { err -= dy; ax += sx; } if (e2 < dx) { err += dx; ay += sy; }
+    }
+  }
+  for (const p of polys) {
+    const r = roleOf[p.L];
+    if (r !== 'outline' && r !== 'opening' && r !== 'rail') continue;
+    const q = p.p;
+    for (let i = 0; i + 3 < q.length; i += 2) {
+      line(q[i], q[i + 1], q[i + 2], q[i + 3], outl, 1);
+      if (r !== 'outline') line(q[i], q[i + 1], q[i + 2], q[i + 3], openL, r === 'rail' ? 2 : 1);
+    }
+  }
+  // 外輪廓:外部填色,失敗時改用逐列左右端
+  const od = dilate(outl, nx, ny, 1);
+  const lab = new Int32Array(N);
+  for (let i = 0; i < N; i++) if (od[i]) lab[i] = -2;
+  const seeds = []; for (let x = 0; x < nx; x++) { seeds.push(x, (ny - 1) * nx + x); } for (let y = 0; y < ny; y++) { seeds.push(y * nx, y * nx + nx - 1); }
+  floodFill(lab, nx, ny, seeds, -1, 0);
+  const sil1 = new Uint8Array(N); let a1 = 0;
+  for (let i = 0; i < N; i++) if (lab[i] !== -1) { sil1[i] = 1; a1++; }
+  const sil2 = new Uint8Array(N); let a2 = 0;
+  for (let y = 0; y < ny; y++) {
+    let l = -1, r = -1; const row = y * nx;
+    for (let x = 0; x < nx; x++) if (outl[row + x]) { if (l < 0) l = x; r = x; }
+    if (l >= 0) for (let x = l; x <= r; x++) { sil2[row + x] = 1; a2++; }
+  }
+  let sil = sil1, method = 'outline';
+  if (a1 < a2 * 0.6) { sil = sil2; method = 'rowspan'; }
+  // 開口:輪廓內、被門窗/欄杆線圍住的小區塊
+  const comp = new Int32Array(N); // 0 未處理
+  const cls = [0]; // 1 牆, 2 開口, 3 欄杆
+  let nc = 0;
+  const stack = new Int32Array(N);
+  const cellA = (px * U) * (px * U) / 1e4;
+  for (let s0 = 0; s0 < N; s0++) {
+    if (!sil[s0] || openL[s0] || comp[s0]) continue;
+    nc++; let sp = 0; stack[sp++] = s0; comp[s0] = nc; let cnt = 0, tWin = 0, tRail = 0, tOther = 0;
+    while (sp) {
+      const i = stack[--sp]; cnt++;
+      const x = i % nx;
+      const nb = [x > 0 ? i - 1 : -1, x < nx - 1 ? i + 1 : -1, i - nx, i + nx];
+      for (const j of nb) {
+        if (j < 0 || j >= N) { tOther++; continue; }
+        if (!sil[j]) { tOther++; continue; }
+        if (openL[j]) { if (openL[j] === 2) tRail++; else tWin++; continue; }
+        if (!comp[j]) { comp[j] = nc; stack[sp++] = j; }
+      }
+    }
+    const tot = tWin + tRail + tOther;
+    let c = 1;
+    if (tot && tOther / tot < 0.08 && cnt * cellA < 60) c = tRail > tWin ? 3 : 2;
+    cls.push(c);
+  }
+  // 最大區塊一定是牆
+  // 線條像素歸屬相鄰區塊
+  const kind = new Uint8Array(N); // 0 外, 1 牆, 2 開口, 3 欄杆
+  for (let i = 0; i < N; i++) if (sil[i]) kind[i] = comp[i] ? cls[comp[i]] : 0;
+  for (let i = 0; i < N; i++) if (sil[i] && !comp[i]) {
+    const x = i % nx; let k = 1;
+    for (const j of [x > 0 ? i - 1 : -1, x < nx - 1 ? i + 1 : -1, i - nx, i + nx]) if (j >= 0 && j < N && comp[j] && cls[comp[j]] > 1) { k = cls[comp[j]]; break; }
+    kind[i] = k;
+  }
+  // 材料:填充線 → 使用者分區
+  const mats = [defaultMat || '外牆(未分區)'];
+  const matIdx = new Uint16Array(N);
+  const wallMask = new Uint8Array(N); for (let i = 0; i < N; i++) wallMask[i] = kind[i] === 1 ? 1 : 0;
+  for (const h of F.hatches || []) {
+    if (roleOf[h.L] !== 'material') continue;
+    if (h.bb[2] < box[0] || h.bb[0] > box[2] || h.bb[3] < box[1] || h.bb[1] > box[3]) continue;
+    const nm = materialName(F.layerNames[h.L]);
+    let mi = mats.indexOf(nm); if (mi < 0) { mi = mats.length; mats.push(nm); }
+    const tmp = new Uint8Array(N);
+    fillPolyRaster(tmp, nx, ny, h.loops, X, Y, 1, null);
+    for (let i = 0; i < N; i++) if (tmp[i] && wallMask[i]) matIdx[i] = mi;
+  }
+  for (const z of zones || []) {
+    const b = z.box; if (b[2] < box[0] || b[0] > box[2] || b[3] < box[1] || b[1] > box[3]) continue;
+    if (z.mat === '不計') {
+      const x0 = Math.max(0, XI(b[0])), x1 = Math.min(nx - 1, XI(b[2])), y0 = Math.max(0, YI(b[1])), y1 = Math.min(ny - 1, YI(b[3]));
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) { const i = y * nx + x; kind[i] = 0; wallMask[i] = 0; }
+      continue;
+    }
+    let mi = mats.indexOf(z.mat); if (mi < 0) { mi = mats.length; mats.push(z.mat); }
+    const x0 = Math.max(0, XI(b[0])), x1 = Math.min(nx - 1, XI(b[2])), y0 = Math.max(0, YI(b[1])), y1 = Math.min(ny - 1, YI(b[3]));
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) { const i = y * nx + x; if (wallMask[i]) matIdx[i] = mi; }
+  }
+  const matArea = mats.map(() => 0);
+  let facade = 0, open = 0, rail = 0, wall = 0, nOpen = 0;
+  for (let i = 0; i < N; i++) {
+    const k = kind[i]; if (!k) continue;
+    facade++;
+    if (k === 1) { wall++; matArea[matIdx[i]]++; } else if (k === 2) open++; else rail++;
+  }
+  for (let c = 1; c < cls.length; c++) if (cls[c] === 2) nOpen++;
+  // 寬、高
+  let minx = nx, maxx = -1, miny = ny, maxy = -1;
+  for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) if (kind[y * nx + x]) { if (x < minx) minx = x; if (x > maxx) maxx = x; if (y < miny) miny = y; if (y > maxy) maxy = y; }
+  return {
+    kind: 'elev', box, px, nx, ny, raster: kind, matIdx, mats, method,
+    facade: facade * cellA, open: open * cellA, rail: rail * cellA, wall: wall * cellA,
+    matAreas: mats.map((m, i) => ({ name: m, area: matArea[i] * cellA })).filter(m => m.area > 0.01),
+    openCount: nOpen, width: maxx >= minx ? (maxx - minx + 1) * px * U / 100 : 0, height: maxy >= miny ? (maxy - miny + 1) * px * U / 100 : 0,
+  };
+}
+function elevationItems(E, params, opt) {
+  // opt: { returnPct, tileSizes:{name:size} }
+  const k = 1 + (opt.returnPct || 0) / 100;
+  const items = [];
+  const add = (trade, item, unit, qty, lossKey, note) => { if (qty > 1e-6) items.push({ trade, item, unit, qty, lossKey, note: note || '' }); };
+  add('泥作', '外牆 1:3 水泥砂漿打底', 'm²', E.wall * k, 'mortar', `立面淨面積 ${E.wall.toFixed(1)} m²${opt.returnPct ? ` × (1+${opt.returnPct}% 凹凸補正)` : ''}`);
+  for (const m of E.matAreas) {
+    const a = m.area * k;
+    const isPaint = /漆|塗/.test(m.name), isStone = /石材|花崗|大理/.test(m.name);
+    const trade = isPaint ? '油漆' : isStone ? '石材' : '磁磚';
+    add(trade, '外牆 ' + m.name, 'm²', a, isPaint ? 'paint' : 'tile');
+    const sz = (opt.tileSizes && opt.tileSizes[m.name]) || guessTileSize(m.name);
+    const mm = /([\d.]+)\s*[x×*]\s*([\d.]+)/.exec(sz || '');
+    if (!isPaint && !isStone && mm) { const j = (opt.joint == null ? 1 : opt.joint); const per = 1e4 / ((parseFloat(mm[1]) + j) * (parseFloat(mm[2]) + j)); add('磁磚', `外牆 ${m.name} 片數`, '片', a * per, 'tile', `${sz} cm,灰縫 ${j} cm,約 ${per.toFixed(0)} 片/m²`); }
+  }
+  add('其他', '外牆開口(門窗)面積', 'm²', E.open, 'paint', `${E.openCount} 處,已自立面扣除`);
+  if (E.rail > 0.01) add('其他', '欄杆/透空面積', 'm²', E.rail, 'paint', '已自立面扣除');
+  const TO = ['結構', '泥作', '磁磚', '石材', '油漆', '其他'];
+  items.sort((a, b) => TO.indexOf(a.trade) - TO.indexOf(b.trade));
+  for (const it of items) { const l = it.trade === '其他' ? 0 : (params.loss[it.lossKey] || 0); it.loss = l; it.total = it.qty * (1 + l / 100); }
+  return items;
+}
+
+const api = { EROLES, guessElevRole, materialName, analyzeElevation, elevationItems, findPlanTitles, planBoxNearTitle, floorRepeat, detectUnit, mergedType, parseDXF, flattenDXF, guessRole, ROLES, ROOM_TYPES, roomTypeOf, isRoomLabel, defaultFinishes, defaultParams, analyzeRegion, computeQuantities, buildXLSX, decodeBytes, cleanMText, tileArea };
+if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.QE = api;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const S = { kind: 'plan', eroles: {}, zones: [], E: null, EI: null,
+  F: null, fileName: '', roles: {}, unit: 1, box: null, titles: [], activeTitle: null,
+  params: QE.defaultParams(), finishes: QE.defaultFinishes(), A: null, Q: null, overrides: {},
+  project: { name: '', floors: [], elevs: [] }, view: { cx: 0, cy: 0, s: 1 }, mode: 'pan', showRooms: true, ext: null,
+};
+const ROLE_COLOR = { wall_rc: '#9b2c2c', wall_brick: '#c2560c', wall_light: '#a16207', column: '#6b21a8', beam: '#0f766e', door: '#1d4ed8', window: '#15803d', rail: '#0e7490', boundary: '#334155' };
+const TYPE_COLOR = { wet: '#38bdf8', kitchen: '#f59e0b', balcony: '#a3e635', public: '#c084fc', living: '#fb7185', service: '#94a3b8' };
+const TYPE_NAME = { wet: '浴廁', kitchen: '廚房', balcony: '陽台/露台', public: '公共空間', living: '居室', service: '機房/設備' };
+const fmt = (v, d = 2) => (v == null || !isFinite(v)) ? '—' : v.toLocaleString('zh-TW', { minimumFractionDigits: d, maximumFractionDigits: d });
+const PING = 3.305785;
+
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('show'), 2600); }
+function setStatus(msg, p) { $('#status').textContent = msg; if (p != null) $('#prog').style.width = Math.round(p * 100) + '%'; }
+const tick = () => new Promise(r => setTimeout(r, 0));
+
+/* ---------------- 儲存 ---------------- */
+function saveLocal() { try { localStorage.setItem('qe-project', JSON.stringify({ project: S.project, roles: S.roles, eroles: S.eroles, finishes: S.finishes, params: S.params })); } catch (e) {} }
+function loadLocal() {
+  try {
+    const d = JSON.parse(localStorage.getItem('qe-project') || 'null'); if (!d) return;
+    if (d.project) { S.project = d.project; S.project.elevs = S.project.elevs || []; } if (d.eroles) S.eroles = d.eroles; if (d.roles) S.roles = d.roles; if (d.finishes) S.finishes = Object.assign(QE.defaultFinishes(), d.finishes);
+    if (d.params) S.params = Object.assign(QE.defaultParams(), d.params);
+  } catch (e) {}
+}
+
+/* ---------------- 檔案載入 ---------------- */
+const drop = $('#drop');
+['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('hover'); }));
+['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('hover'); }));
+drop.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) loadFile(f); });
+$('#file').addEventListener('change', e => { const f = e.target.files[0]; if (f) loadFile(f); e.target.value = ''; });
+$('#demoBtn').addEventListener('click', () => { const txt = demoDXF(); loadDXFBytes(new TextEncoder().encode(txt), '示範平面圖.dxf'); });
+
+let pdfDoc = null;
+async function loadFile(f) {
+  const ext = f.name.split('.').pop().toLowerCase();
+  if (ext === 'dwg') { setStatus('DWG 無法直接讀取:請在 AutoCAD 用「另存新檔 → DXF」後再匯入。', 0); toast('請先另存為 DXF'); return; }
+  const buf = new Uint8Array(await f.arrayBuffer());
+  if (ext === 'pdf') return loadPDF(buf, f.name);
+  return loadDXFBytes(buf, f.name);
+}
+
+async function loadDXFBytes(u8, name) {
+  try {
+    $('#pdfOpts').hidden = true;
+    setStatus(`讀取 ${name}(${(u8.length / 1048576).toFixed(1)} MB)…`, 0.02); await tick();
+    const doc = QE.parseDXF(u8, p => { $('#prog').style.width = Math.round(p * 50) + '%'; });
+    setStatus('展開圖塊…', 0.55); await tick();
+    const F = QE.flattenDXF(doc);
+    const u = QE.detectUnit(F, doc.insunits);
+    setFile(F, name, u);
+    setStatus(`${name}:${F.polys.length.toLocaleString()} 條線、${F.texts.length.toLocaleString()} 段文字、${F.layerNames.length} 個圖層`, 1);
+  } catch (e) { console.error(e); setStatus('讀取失敗:' + e.message + '。請確認是 DXF 檔(AutoCAD 另存新檔 → DXF)。', 0); }
+}
+
+function setFile(F, name, u) {
+  S.F = F; S.fileName = name; S.box = null; S.A = null; S.Q = null; S.overrides = {};
+  S.unit = u.unitToCm; S.params.unitToCm = u.unitToCm;
+  $('#unitSel').value = String(u.unitToCm); $('#unitWhy').textContent = u.why;
+  for (const n of F.layerNames) if (!S.roles[n]) S.roles[n] = QE.guessRole(n);
+  const hasH = new Set((F.hatches || []).map(x => x.L));
+  F.layerNames.forEach((n, i) => { if (!S.eroles[n]) S.eroles[n] = QE.guessElevRole(n, hasH.has(i)); });
+  S.E = null; S.EI = null; S.zones = [];
+  S.ext = extents(F);
+  computeTitles(F);
+  renderTitles();
+  $('#empty').hidden = true;
+  buildRenderCache();
+  fit();
+  renderLayers(); updateRunBtn(); renderTab();
+}
+function computeTitles(F) {
+  if (S.kind === 'elev') {
+    const ts = F.texts.filter(t => /立面圖/.test(t.s) && t.s.length <= 20 && !/、|,/.test(t.s));
+    const out = [];
+    for (const t of ts.sort((a, b) => b.h - a.h)) { if (out.some(o => o.title === t.s && Math.hypot(o.x - t.x, o.y - t.y) < t.h * 5)) continue; out.push({ title: t.s, x: t.x, y: t.y, h: t.h, repeat: 1 }); }
+    S.titles = out.map(t => ({ ...t, box: QE.planBoxNearTitle(F, t, S.eroles, { members: ['outline', 'opening', 'rail'], gap: 8, wy: 150, wx: 40 }) })).filter(t => t.box && (t.box[2] - t.box[0]) * S.unit > 500 && (t.box[3] - t.box[1]) * S.unit > 500);
+    return;
+  }
+  S.titles = QE.findPlanTitles(F).map(t => ({ ...t, box: QE.planBoxNearTitle(F, t, S.roles) })).filter(t => t.box && (t.box[2] - t.box[0]) * S.unit > 300 && (t.box[3] - t.box[1]) * S.unit > 300);
+}
+
+function extents(F) {
+  // 取 2%~98% 分位避免遠處雜點
+  const xs = [], ys = [];
+  const step = Math.max(1, Math.floor(F.polys.length / 20000));
+  for (let i = 0; i < F.polys.length; i += step) { const b = F.polys[i].bb; xs.push((b[0] + b[2]) / 2); ys.push((b[1] + b[3]) / 2); }
+  xs.sort((a, b) => a - b); ys.sort((a, b) => a - b);
+  const q = (a, f) => a[Math.min(a.length - 1, Math.floor(a.length * f))];
+  if (!xs.length) return [0, 0, 100, 100];
+  return [q(xs, 0.01), q(ys, 0.01), q(xs, 0.99), q(ys, 0.99)];
+}
+
+/* ---------------- PDF(試用) ---------------- */
+function loadScript(src) { return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('無法載入 ' + src)); document.head.appendChild(s); }); }
+async function ensurePdfjs() {
+  if (window.pdfjsLib) return;
+  await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js');
+  await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
+async function loadPDF(buf, name) {
+  try {
+    setStatus('載入 PDF 解析元件…', 0.05);
+    await ensurePdfjs();
+    pdfDoc = await pdfjsLib.getDocument({ data: buf, isEvalSupported: false }).promise;
+    const sel = $('#pdfPage'); sel.innerHTML = '';
+    for (let i = 1; i <= pdfDoc.numPages; i++) sel.add(new Option('第 ' + i + ' 頁', i));
+    $('#pdfOpts').hidden = false;
+    S.fileName = name;
+    await loadPDFPage(1);
+  } catch (e) { console.error(e); setStatus('PDF 讀取失敗:' + e.message, 0); }
+}
+$('#pdfPage').addEventListener('change', e => loadPDFPage(parseInt(e.target.value)));
+$('#pdfScale').addEventListener('change', () => { if (S.F && S.F.isPDF) { const u = 2.54 / 72 * (parseFloat($('#pdfScale').value) || 100); S.unit = u; S.params.unitToCm = u; $('#unitWhy').textContent = 'PDF 比例換算'; toast('已更新比例'); } });
+async function loadPDFPage(no) {
+  setStatus(`讀取第 ${no} 頁向量線條…`, 0.2);
+  const page = await pdfDoc.getPage(no);
+  const ops = await page.getOperatorList();
+  const O = pdfjsLib.OPS;
+  const layerNames = [], layerIdx = new Map();
+  const LI = n => { let i = layerIdx.get(n); if (i === undefined) { i = layerNames.length; layerNames.push(n); layerIdx.set(n, i); } return i; };
+  const polys = [];
+  let M = [1, 0, 0, 1, 0, 0]; const stack = [];
+  let lw = 1, sc = '#000000', fc = '#000000';
+  let pending = [];
+  const tx = (x, y) => [M[0] * x + M[2] * y + M[4], M[1] * x + M[3] * y + M[5]];
+  const hex = a => '#' + a.slice(0, 3).map(v => Math.round(v).toString(16).padStart(2, '0')).join('');
+  const flush = (kind) => {
+    if (!pending.length) return;
+    const scale = Math.hypot(M[0], M[1]);
+    const name = kind === 'fill' ? `填色 ${fc}` : `線 ${sc} ${(lw * scale).toFixed(2)}pt`;
+    const L = LI(name);
+    for (const p of pending) if (p.length >= 4) polys.push({ L, p: Float64Array.from(p), c: false, ins: -1 });
+    pending = [];
+  };
+  for (let i = 0; i < ops.fnArray.length; i++) {
+    const fn = ops.fnArray[i], a = ops.argsArray[i];
+    if (fn === O.save) stack.push([M.slice(), lw, sc, fc]);
+    else if (fn === O.restore) { const s = stack.pop(); if (s) [M, lw, sc, fc] = s; }
+    else if (fn === O.transform) { const [a0, b0, c0, d0, e0, f0] = a; M = [M[0] * a0 + M[2] * b0, M[1] * a0 + M[3] * b0, M[0] * c0 + M[2] * d0, M[1] * c0 + M[3] * d0, M[0] * e0 + M[2] * f0 + M[4], M[1] * e0 + M[3] * f0 + M[5]]; }
+    else if (fn === O.setLineWidth) lw = a[0];
+    else if (fn === O.setStrokeRGBColor) sc = typeof a[0] === 'string' ? a[0] : hex(a);
+    else if (fn === O.setFillRGBColor) fc = typeof a[0] === 'string' ? a[0] : hex(a);
+    else if (fn === O.constructPath) {
+      const sub = a[0], co = a[1]; let k = 0; let cur = null; let start = null;
+      for (const op of sub) {
+        if (op === O.moveTo) { if (cur && cur.length >= 4) pending.push(cur); const p = tx(co[k], co[k + 1]); k += 2; cur = [p[0], p[1]]; start = p; }
+        else if (op === O.lineTo) { const p = tx(co[k], co[k + 1]); k += 2; if (!cur) cur = []; cur.push(p[0], p[1]); }
+        else if (op === O.curveTo) { const p = tx(co[k + 4], co[k + 5]); k += 6; if (!cur) cur = []; cur.push(p[0], p[1]); }
+        else if (op === O.curveTo2 || op === O.curveTo3) { const p = tx(co[k + 2], co[k + 3]); k += 4; if (!cur) cur = []; cur.push(p[0], p[1]); }
+        else if (op === O.closePath) { if (cur && start) cur.push(start[0], start[1]); }
+        else if (op === O.rectangle) { const x = co[k], y = co[k + 1], w = co[k + 2], h = co[k + 3]; k += 4; const r = [tx(x, y), tx(x + w, y), tx(x + w, y + h), tx(x, y + h), tx(x, y)]; if (cur && cur.length >= 4) pending.push(cur); pending.push(r.flat()); cur = null; }
+      }
+      if (cur && cur.length >= 4) pending.push(cur);
+    }
+    else if (fn === O.stroke || fn === O.closeStroke) flush('stroke');
+    else if (fn === O.fill || fn === O.eoFill || fn === O.fillStroke || fn === O.eoFillStroke || fn === O.closeFillStroke || fn === O.closeEOFillStroke) flush('fill');
+    else if (fn === O.endPath) pending = [];
+  }
+  const tc = await page.getTextContent();
+  const texts = [];
+  const TL = LI('PDF 文字');
+  for (const it of tc.items) { if (!it.str || !it.str.trim()) continue; const t = it.transform; const h = Math.hypot(t[2], t[3]); texts.push({ L: TL, x: t[4] + (it.width || 0) / 2, y: t[5] + h / 2, h, s: it.str.trim() }); }
+  for (const p of polys) { let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity; const q = p.p; for (let i = 0; i < q.length; i += 2) { const x = q[i], y = q[i + 1]; if (x < a) a = x; if (y < b) b = y; if (x > c) c = x; if (y > d) d = y; } p.bb = [a, b, c, d]; }
+  const F = { layerNames, polys, texts, inserts: [], isPDF: true };
+  // PDF 圖層:依線寬判斷,最粗的兩組當作牆
+  const widths = layerNames.map((n, i) => { const m = /([\d.]+)pt/.exec(n); return [i, m ? parseFloat(m[1]) : 0, n]; }).filter(x => x[2].startsWith('線')).sort((a, b) => b[1] - a[1]);
+  for (const n of layerNames) S.roles[n] = { role: 'ignore' };
+  widths.slice(0, 2).forEach(w => { S.roles[w[2]] = { role: 'wall_rc', thk: 15 }; });
+  for (const n of layerNames) if (n.startsWith('填色')) S.roles[n] = { role: 'boundary' };
+  for (const n of layerNames) S.eroles[n] = { role: S.roles[n].role === 'wall_rc' ? 'outline' : 'ignore' };
+  const u = 2.54 / 72 * (parseFloat($('#pdfScale').value) || 100);
+  setFile(F, S.fileName, { unitToCm: u, why: 'PDF 比例換算' });
+  $('#unitSel').value = '1';
+  setStatus(`${S.fileName} 第 ${no} 頁:${polys.length.toLocaleString()} 條線、${texts.length} 段文字。PDF 沒有圖層,已依線寬分組,請在步驟 03 確認哪一組是牆。`, 1);
+}
+
+/* ---------------- 圖名清單 ---------------- */
+function renderTitles() {
+  const el = $('#titles'); el.innerHTML = '';
+  if (!S.titles.length) { el.innerHTML = `<span class="muted small">沒有偵測到可自動框選的「…${S.kind === 'elev' ? '立面圖' : '平面圖'}」,請用「手動框選」在圖上拖曳。</span>`; return; }
+  const seen = {};
+  S.titles.forEach((t, i) => {
+    seen[t.title] = (seen[t.title] || 0) + 1;
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'chip' + (S.activeTitle === i ? ' on' : '');
+    b.innerHTML = esc(t.title) + (seen[t.title] > 1 ? `<span class="muted"> (${seen[t.title]})</span>` : '') + (t.repeat > 1 ? `<em>×${t.repeat}</em>` : '');
+    b.title = '同名圖面可能出現在不同圖紙(面積圖、配置圖等),點了會跳到該位置';
+    b.addEventListener('click', () => { S.activeTitle = i; setBox(t.box); if (S.kind === 'elev') $('#eName').value = t.title.replace(/立面圖/, ''); else { $('#pName').value = t.title.replace(/平面圖/, ''); $('#pRepeat').value = t.repeat; } zoomTo(t.box); renderTitles(); });
+    el.appendChild(b);
+  });
+}
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function setBox(b) {
+  S.box = b; S.A = null; S.Q = null; S.overrides = {}; S.E = null; S.EI = null;
+  const u = S.unit; $('#boxInfo').textContent = b ? `${fmt((b[2] - b[0]) * u / 100, 1)} × ${fmt((b[3] - b[1]) * u / 100, 1)} m` : '—';
+  renderLayers(); updateRunBtn(); draw();
+}
+function updateRunBtn() { $('#runBtn').disabled = !(S.F && S.box); $('#runInfo').textContent = S.F && !S.box ? '請先選擇範圍' : ''; }
+
+/* ---------------- 圖層表 ---------------- */
+const ROLE_OPTS = Object.entries(QE.ROLES);
+function renderLayers() {
+  const wrap = $('#layers');
+  if (!S.F || !S.box) { wrap.innerHTML = '<table><tbody><tr><td class="muted">先選擇範圍</td></tr></tbody></table>'; return; }
+  const b = S.box; const cnt = new Map();
+  for (const p of S.F.polys) { if (p.bb[2] < b[0] || p.bb[0] > b[2] || p.bb[3] < b[1] || p.bb[1] > b[3]) continue; cnt.set(p.L, (cnt.get(p.L) || 0) + 1); }
+  const rows = [...cnt.entries()].map(([L, c]) => [S.F.layerNames[L], c]);
+  const order = { wall_rc: 0, wall_brick: 1, wall_light: 2, column: 3, beam: 4, door: 5, window: 6, rail: 7, boundary: 8, ignore: 9 };
+  if (S.kind === 'elev') return renderElevLayers(wrap, rows);
+  rows.sort((a, b) => (order[S.roles[a[0]].role] - order[S.roles[b[0]].role]) || b[1] - a[1]);
+  let h = '<table><tbody>';
+  for (const [n, c] of rows) {
+    const r = S.roles[n];
+    const col = ROLE_COLOR[r.role] || 'transparent';
+    h += `<tr><td class="name"><span class="swatch" style="background:${col}"></span>${esc(n)}</td><td class="cnt">${c}</td><td><select data-l="${esc(n)}" aria-label="${esc(n)} 用途">${ROLE_OPTS.map(([k, v]) => `<option value="${k}"${k === r.role ? ' selected' : ''}>${v}</option>`).join('')}</select></td><td>${r.role.startsWith('wall_') || r.role === 'rail' ? `<input type="number" data-t="${esc(n)}" value="${r.thk || 15}" aria-label="厚度 cm" title="厚度 cm">` : ''}</td></tr>`;
+  }
+  h += '</tbody></table>';
+  wrap.innerHTML = h;
+  wrap.querySelectorAll('select').forEach(s => s.addEventListener('change', e => { const n = e.target.dataset.l; const r = e.target.value; const old = S.roles[n]; S.roles[n] = { role: r, thk: old.thk || (r === 'wall_brick' ? 12 : r === 'rail' ? 10 : 15) }; buildRenderCache(); renderLayers(); draw(); }));
+  wrap.querySelectorAll('input').forEach(s => s.addEventListener('change', e => { S.roles[e.target.dataset.t].thk = parseFloat(e.target.value) || 15; }));
+}
+const EROLE_COLOR = { outline: '#9b2c2c', opening: '#1d4ed8', rail: '#0e7490', material: '#a16207' };
+function renderElevLayers(wrap, rows) {
+  const b = S.box;
+  for (const hh of S.F.hatches || []) { if (hh.bb[2] < b[0] || hh.bb[0] > b[2] || hh.bb[3] < b[1] || hh.bb[1] > b[3]) continue; const n = S.F.layerNames[hh.L]; const r = rows.find(x => x[0] === n); if (r) r[1]++; else rows.push([n, 1]); }
+  const order = { outline: 0, opening: 1, rail: 2, material: 3, ignore: 4 };
+  rows.sort((a, c) => (order[S.eroles[a[0]].role] - order[S.eroles[c[0]].role]) || c[1] - a[1]);
+  let h = '<table><tbody>';
+  for (const [n, c] of rows) {
+    const r = S.eroles[n];
+    h += `<tr><td class="name"><span class="swatch" style="background:${EROLE_COLOR[r.role] || 'transparent'}"></span>${esc(n)}</td><td class="cnt">${c}</td><td><select data-e="${esc(n)}" aria-label="${esc(n)} 用途">${Object.entries(QE.EROLES).map(([k, v]) => `<option value="${k}"${k === r.role ? ' selected' : ''}>${v}</option>`).join('')}</select></td></tr>`;
+  }
+  wrap.innerHTML = h + '</tbody></table>';
+  wrap.querySelectorAll('select').forEach(s => s.addEventListener('change', e => { S.eroles[e.target.dataset.e] = { role: e.target.value }; buildRenderCache(); renderLayers(); draw(); saveLocal(); }));
+}
+$('#unitSel').addEventListener('change', e => { S.unit = parseFloat(e.target.value); S.params.unitToCm = S.unit; setBox(S.box); });
+
+/* ---------------- 平面 / 立面 ---------------- */
+function setKind(k) {
+  S.kind = k;
+  $('#modePlan').classList.toggle('on', k === 'plan'); $('#modeElev').classList.toggle('on', k === 'elev');
+  $('#step2Title').textContent = k === 'elev' ? '選擇一張立面圖' : '選擇一層平面圖';
+  $('#step2Help').textContent = k === 'elev' ? '立面圖用來算外牆:外牆面積、扣門窗、依材料分區。框選一個立面(一棟的一面)。' : '點圖名會自動框出該層;也可以按「手動框選」在圖上拖曳。';
+  $('#planParams').hidden = k === 'elev'; $('#elevParams').hidden = k !== 'elev';
+  $('#runBtn').textContent = k === 'elev' ? '計算這個立面' : '計算這一層';
+  S.activeTitle = null; S.box = null; S.A = null; S.Q = null; S.E = null; S.EI = null; S.zones = [];
+  $('#boxInfo').textContent = '—';
+  if (S.F) { computeTitles(S.F); renderTitles(); buildRenderCache(); }
+  renderLayers(); renderZones(); updateRunBtn(); renderTab(); draw();
+}
+$('#modePlan').addEventListener('click', () => setKind('plan'));
+$('#modeElev').addEventListener('click', () => setKind('elev'));
+function renderZones() {
+  const el = $('#zoneList');
+  el.innerHTML = S.zones.map((z, i) => `<span class="chip" style="cursor:default">${esc(z.mat)} <span class="num muted">${fmt((z.box[2] - z.box[0]) * S.unit / 100, 1)}×${fmt((z.box[3] - z.box[1]) * S.unit / 100, 1)}m</span> <button class="btn small" type="button" data-zd="${i}" aria-label="刪除分區">×</button></span>`).join(' ');
+  el.querySelectorAll('[data-zd]').forEach(b => b.addEventListener('click', () => { S.zones.splice(+b.dataset.zd, 1); renderZones(); if (S.E) runElev(); else draw(); }));
+}
+$('#zoneBtn').addEventListener('click', () => { if (!S.box) { toast('請先框選立面範圍'); return; } S.mode = S.mode === 'zone' ? 'pan' : 'zone'; $('#zoneBtn').classList.toggle('on', S.mode === 'zone'); $('#boxBtn').classList.remove('on'); cv.style.cursor = S.mode === 'zone' ? 'crosshair' : 'grab'; });
+['eDefault', 'eReturn', 'eJoint'].forEach(id => $('#' + id).addEventListener('change', () => { if (S.E) runElev(); }));
+function elevOpts() { return { returnPct: parseFloat($('#eReturn').value) || 0, joint: parseFloat($('#eJoint').value), tileSizes: S.tileSizes || {} }; }
+function runElev() {
+  readParams();
+  S.E = QE.analyzeElevation(S.F, S.box, S.eroles, S.params, S.zones, $('#eDefault').value || '外牆(未分區)');
+  S.EI = QE.elevationItems(S.E, S.params, elevOpts());
+  S.E.overlay = null;
+  buildRenderCache(); renderTab(); draw();
+}
+
+/* ---------------- 參數 ---------------- */
+const PMAP = { pFloorH: 'floorH', pSlab: 'slabT', pCeil: 'ceilH', pGap: 'gapCm', pBeamB: 'beamB', pBeamD: 'beamD', pBeamR: 'beamRatio', pDoorH: 'doorH', pWinH: 'winH', pSill: 'winSill' };
+function readParams() {
+  for (const id in PMAP) S.params[PMAP[id]] = parseFloat($('#' + id).value) || 0;
+  S.params.extWall = $('#pExt').value; S.params.extTile = $('#pExtTile').value;
+  S.params.repeat = Math.max(1, parseInt($('#pRepeat').value) || 1);
+  S.params.unitToCm = S.unit;
+}
+function writeParams() {
+  for (const id in PMAP) $('#' + id).value = S.params[PMAP[id]];
+  $('#pExt').value = S.params.extWall; $('#pExtTile').value = S.params.extTile;
+}
+['pFloorH', 'pSlab', 'pCeil', 'pBeamB', 'pBeamD', 'pBeamR', 'pDoorH', 'pWinH', 'pSill', 'pExt', 'pExtTile', 'pRepeat'].forEach(id => $('#' + id).addEventListener('change', () => { readParams(); if (S.A) { recompute(); } }));
+$('#pGap').addEventListener('change', readParams);
+
+/* ---------------- 計算 ---------------- */
+$('#runBtn').addEventListener('click', async () => {
+  readParams();
+  $('#busy').classList.add('show'); await tick(); await new Promise(r => requestAnimationFrame(() => setTimeout(r, 30)));
+  if (S.kind === 'elev') { try { runElev(); selectTab('floor'); } catch (e) { console.error(e); toast('計算失敗:' + e.message); } $('#busy').classList.remove('show'); return; }
+  try {
+    S.A = QE.analyzeRegion(S.F, S.box, S.roles, S.params);
+    S.overrides = {};
+    recompute();
+    selectTab('floor');
+    draw();
+  } catch (e) { console.error(e); toast('計算失敗:' + e.message); }
+  $('#busy').classList.remove('show');
+});
+function recompute() {
+  readParams();
+  S.Q = QE.computeQuantities(S.A, S.params, S.finishes, S.overrides);
+  renderTab();
+}
+
+/* ---------------- 結果分頁 ---------------- */
+let curTab = 'floor';
+document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => selectTab(t.dataset.tab)));
+function selectTab(name) { curTab = name; document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.dataset.tab === name)); ['floor', 'rooms', 'finish', 'project'].forEach(n => $('#tab-' + n).hidden = n !== name); renderTab(); }
+function renderTab() {
+  const pc = S.project.floors.length + (S.project.elevs || []).length; $('#projCount').textContent = pc ? `(${pc})` : '';
+  if (curTab === 'floor') renderFloor(); else if (curTab === 'rooms') renderRooms(); else if (curTab === 'finish') renderFinish(); else renderProject();
+}
+
+function itemsTable(items, mult) {
+  mult = mult || 1;
+  let h = '<div class="tablewrap"><table class="q"><thead><tr><th>項目</th><th>單位</th><th style="text-align:right">數量</th><th style="text-align:right">損耗</th><th style="text-align:right">含損耗</th><th>說明</th></tr></thead><tbody>';
+  let lastTrade = null;
+  for (const it of items) {
+    if (it.trade !== lastTrade) { h += `<tr class="trade"><td colspan="6">${esc(it.trade)}</td></tr>`; lastTrade = it.trade; }
+    const sub = /小計/.test(it.item) ? ' class="sub"' : '';
+    const d = it.unit === '塊' || it.unit === '片' ? 0 : 2;
+    const ping = it.unit === 'm²' ? ` <span class="muted small">(${fmt(it.total * mult / PING, 1)} 坪)</span>` : '';
+    h += `<tr${sub}><td>${esc(it.item)}</td><td>${it.unit}</td><td class="n">${fmt(it.qty * mult, d)}</td><td class="n">${it.loss}%</td><td class="n">${fmt(it.total * mult, d)}${ping}</td><td class="memo">${esc(it.note || '')}</td></tr>`;
+  }
+  return h + '</tbody></table></div>';
+}
+function renderElevResult(el) {
+  const E = S.E;
+  let h = `<div class="tiles">
+    <div class="tile"><span>立面寬 × 高</span><b>${fmt(E.width, 1)} × ${fmt(E.height, 1)}</b><small>m</small></div>
+    <div class="tile"><span>立面總面積</span><b>${fmt(E.facade, 1)}</b><small>m²</small></div>
+    <div class="tile"><span>門窗開口</span><b>${fmt(E.open, 1)}</b><small>m²</small><small>${E.openCount} 處</small></div>
+    <div class="tile"><span>欄杆 / 透空</span><b>${fmt(E.rail, 1)}</b><small>m²</small></div>
+    <div class="tile"><span>外牆淨面積</span><b>${fmt(E.wall, 1)}</b><small>m²</small><small>${fmt(E.wall / PING, 1)} 坪</small></div>
+  </div>`;
+  if (E.method === 'rowspan') h += '<p class="small muted">外輪廓線沒有完全封閉(常見是地坪線不在牆圖層),已改用每一列最左到最右的範圍當作外牆輪廓。</p>';
+  h += '<h3 style="font-size:14px;margin:6px 0 8px">材料分區</h3><div class="tablewrap"><table class="q"><thead><tr><th>材料</th><th style="text-align:right">面積 m²</th><th>磁磚規格 cm(算片數用)</th></tr></thead><tbody>';
+  for (const m of E.matAreas) h += `<tr><td>${esc(m.name)}</td><td class="n">${fmt(m.area)}</td><td><input type="text" data-ts="${esc(m.name)}" value="${esc((S.tileSizes || {})[m.name] || (/漆|塗|石/.test(m.name) ? '' : ({ '二丁掛': '22.7x6' }[m.name] || (/小口/.test(m.name) ? '10.8x6' : /丁掛/.test(m.name) ? '22.7x6' : ''))))}" placeholder="例 22.7x6" style="width:110px" aria-label="${esc(m.name)} 規格"></td></tr>`;
+  h += '</tbody></table></div><p class="small muted">立面是投影面積:陽台側牆、凹凸轉角的側面看不到,可用「凹凸補正 %」補。</p>';
+  h += itemsTable(S.EI, 1);
+  h += `<div class="actions"><button class="btn primary" id="addElev" type="button">加入專案總表</button><span class="small muted">專案有立面資料時,外牆數量改用立面結果,不再用平面「周長 × 樓高」。</span></div>`;
+  el.innerHTML = h;
+  el.querySelectorAll('[data-ts]').forEach(i => i.addEventListener('change', e => { S.tileSizes = S.tileSizes || {}; S.tileSizes[e.target.dataset.ts] = e.target.value; S.EI = QE.elevationItems(S.E, S.params, elevOpts()); renderTab(); }));
+  $('#addElev').addEventListener('click', () => {
+    const name = $('#eName').value || ('立面 ' + (S.project.elevs.length + 1));
+    S.project.elevs.push({ name, file: S.fileName, facade: E.facade, open: E.open, rail: E.rail, wall: E.wall, mats: E.matAreas, items: S.EI.map(it => ({ trade: it.trade, item: it.item, unit: it.unit, qty: it.qty, loss: it.loss, total: it.total, note: it.note })) });
+    saveLocal(); toast('已加入立面:' + name); renderTab();
+  });
+}
+function renderFloor() {
+  const el = $('#tab-floor');
+  if (S.kind === 'elev') { if (S.E) return renderElevResult(el); el.innerHTML = '<p class="muted">框選一個立面、確認圖層後按「計算這個立面」。</p>'; return; }
+  if (!S.Q) { el.innerHTML = '<p class="muted">選好範圍、確認圖層後按「計算這一層」。</p>'; return; }
+  const A = S.A, Q = S.Q, sm = Q.summary;
+  const bad = A.rooms.filter(r => r.status !== 'ok');
+  const sumRooms = A.rooms.filter(r => r.status === 'ok').reduce((s, r) => s + r.area, 0);
+  const wallA = A.walls.reduce((s, w) => s + w.len * w.thk / 100, 0) + A.columns.reduce((s, c) => s + c.A / 1e4, 0);
+  let h = `<div class="tiles">
+    <div class="tile"><span>樓地板面積</span><b>${fmt(sm.floorArea, 1)}</b><small>m²</small><small>${fmt(sm.floorArea / PING, 1)} 坪</small></div>
+    <div class="tile"><span>室內空間面積合計</span><b>${fmt(sumRooms, 1)}</b><small>m²</small></div>
+    <div class="tile"><span>牆柱 / 未標示空間</span><b>${fmt(wallA, 1)} / ${fmt(Math.max(0, sm.floorArea - sumRooms - wallA), 1)}</b><small>m²</small></div>
+    <div class="tile"><span>外圍周長</span><b>${fmt(sm.extPerim, 1)}</b><small>m</small></div>
+    <div class="tile"><span>空間 / 門窗 / 柱</span><b>${sm.rooms} / ${sm.openings} / ${sm.columns}</b></div>
+    <div class="tile"><span>本層 × 層數</span><b>× ${S.params.repeat}</b><small>${esc($('#pName').value)}</small></div>
+  </div>`;
+  if (bad.length) {
+    h += `<div class="note">有 ${bad.length} 個空間名稱沒有圍成封閉區域,沒算進去(通常是開放陽台、門洞沒畫線、或牆圖層沒設定)。點名稱可以在圖上找到位置:</div><div class="warnlist">` +
+      bad.map((r, i) => `<button class="chip" type="button" data-x="${r.x}" data-y="${r.y}">${esc(r.name)} <span class="pill ${r.status === 'open' ? 'warn' : 'bad'}">${r.status === 'open' ? '連到室外' : r.status === 'leak' ? '範圍過大' : '在牆上'}</span></button>`).join('') + '</div>';
+  }
+  if (sm.floorArea - sumRooms - wallA > sm.floorArea * 0.05) h += `<p class="small muted">未標示空間是圖上沒有空間名稱的區域(管道間、雨遮、沒寫名稱的陽台等),不會計入地坪與牆面裝修。需要的話可在圖上補文字,或另外框選計算。</p>`;
+  if (!A.beamFromLayer) h += `<p class="small muted">範圍內沒有梁線圖層,梁數量以樓地板面積 × ${S.params.beamRatio} m/m² 估算。若有結構平面圖,把梁線圖層設成「梁(線)」會更準。</p>`;
+  h += itemsTable(Q.items, 1);
+  h += `<div class="actions"><button class="btn primary" id="addFloor" type="button">加入專案總表(× ${S.params.repeat} 層)</button><span class="small muted">數量為單層;加入專案時會乘上相同樓層數。</span></div>`;
+  el.innerHTML = h;
+  el.querySelectorAll('.warnlist .chip').forEach(b => b.addEventListener('click', () => { const x = +b.dataset.x, y = +b.dataset.y; const r = 300 / S.unit; zoomTo([x - r, y - r, x + r, y + r]); flash = [x, y]; draw(); }));
+  $('#addFloor').addEventListener('click', addFloor);
+}
+let flash = null;
+
+function renderRooms() {
+  const el = $('#tab-rooms');
+  if (!S.Q) { el.innerHTML = '<p class="muted">計算後會列出每個空間的面積、周長與裝修數量。</p>'; return; }
+  const rows = S.A.rooms.filter(r => r.status === 'ok');
+  const det = new Map(S.Q.roomDetail.map(d => [d.id, d]));
+  let h = '<p class="help small muted">可以改空間類型(會套用「裝修與係數」的設定),或勾掉不計的空間。</p><div class="tablewrap"><table class="q"><thead><tr><th>計入</th><th>空間</th><th>類型</th><th style="text-align:right">面積 m²</th><th style="text-align:right">周長 m</th><th>地坪</th><th style="text-align:right">壁磚 m²</th><th style="text-align:right">牆面油漆 m²</th><th style="text-align:right">天花油漆 m²</th><th style="text-align:right">門窗</th></tr></thead><tbody>';
+  for (const r of rows) {
+    const ov = S.overrides[r.id] || {};
+    const d = det.get(r.id);
+    const type = ov.type || QE.mergedType(r);
+    h += `<tr><td><input type="checkbox" data-ex="${r.id}" ${ov.exclude ? '' : 'checked'} aria-label="計入 ${esc(r.name)}"></td><td>${esc((r.names || [r.name]).join('/'))}</td><td><select data-ty="${r.id}" aria-label="類型">${Object.entries(TYPE_NAME).map(([k, v]) => `<option value="${k}"${k === type ? ' selected' : ''}>${v}</option>`).join('')}</select></td>
+      <td class="n">${fmt(r.area)}</td><td class="n">${fmt(r.perim)}</td><td>${d ? esc(d.floor) : '—'}</td><td class="n">${d ? fmt(d.wallTile) : '—'}</td><td class="n">${d ? fmt(d.wallPaint) : '—'}</td><td class="n">${d ? fmt(d.ceilPaint) : '—'}</td><td class="n">${d ? d.openings : '—'}</td></tr>`;
+  }
+  h += '</tbody></table></div>';
+  el.innerHTML = h;
+  el.querySelectorAll('[data-ex]').forEach(c => c.addEventListener('change', e => { const id = +e.target.dataset.ex; S.overrides[id] = Object.assign(S.overrides[id] || {}, { exclude: !e.target.checked }); recompute(); draw(); }));
+  el.querySelectorAll('[data-ty]').forEach(c => c.addEventListener('change', e => { const id = +e.target.dataset.ty; S.overrides[id] = Object.assign(S.overrides[id] || {}, { type: e.target.value }); recompute(); draw(); }));
+}
+
+function renderFinish() {
+  const el = $('#tab-finish');
+  const F = S.finishes;
+  let h = '<h3 style="font-size:14px;margin-bottom:8px">各類空間的裝修</h3><div class="tablewrap"><table class="q finish"><thead><tr><th>空間類型</th><th>地坪</th><th>地磚規格 cm</th><th>牆面</th><th>壁磚規格 cm</th><th>壁磚高度</th><th>天花板</th></tr></thead><tbody>';
+  for (const k in TYPE_NAME) {
+    const f = F[k];
+    h += `<tr><td><span class="swatch" style="background:${TYPE_COLOR[k]}"></span>${TYPE_NAME[k]}<div class="small muted">${esc(QE.ROOM_TYPES.find(t => t.id === k).re.source.split('|').slice(0, 5).join('、'))}…</div></td>
+      <td><select data-k="${k}" data-f="floor"><option value="tile">磁磚</option><option value="wood">木地板</option><option value="screed">水泥粉光</option><option value="none">不計</option></select></td>
+      <td><input type="text" data-k="${k}" data-f="floorTile" value="${esc(f.floorTile)}"></td>
+      <td><select data-k="${k}" data-f="wall"><option value="tile">磁磚</option><option value="paint">油漆</option><option value="none">不計</option></select></td>
+      <td><input type="text" data-k="${k}" data-f="wallTile" value="${esc(f.wallTile)}"></td>
+      <td><select data-k="${k}" data-f="tileH"><option value="ceil">到天花板</option><option value="90">90 cm</option><option value="120">120 cm</option><option value="150">150 cm</option><option value="210">210 cm</option><option value="0">0</option></select></td>
+      <td><select data-k="${k}" data-f="ceil"><option value="paint">平頂油漆</option><option value="none">不計(另做天花板)</option></select></td></tr>`;
+  }
+  h += '</tbody></table></div>';
+  const P = S.params;
+  h += `<h3 style="font-size:14px;margin:18px 0 8px">結構與材料係數</h3><div class="grid2" style="max-width:640px">
+    <label for="rbSlab">樓板含筋率 kg/m³<input type="number" id="rbSlab" value="${P.rebar.slab}"></label>
+    <label for="rbBeam">梁含筋率 kg/m³<input type="number" id="rbBeam" value="${P.rebar.beam}"></label>
+    <label for="rbCol">柱含筋率 kg/m³<input type="number" id="rbCol" value="${P.rebar.column}"></label>
+    <label for="rbWall">牆含筋率 kg/m³<input type="number" id="rbWall" value="${P.rebar.wall}"></label>
+    <label for="bk12">1/2B 紅磚 塊/m²<input type="number" id="bk12" value="${P.brickPerM2[12]}"></label>
+    <label for="bk24">1B 紅磚 塊/m²<input type="number" id="bk24" value="${P.brickPerM2[24]}"></label>
+  </div>
+  <h3 style="font-size:14px;margin:18px 0 8px">損耗率 %</h3><div class="grid2" style="max-width:640px">
+    ${[['concrete', '混凝土'], ['form', '模板'], ['rebar', '鋼筋'], ['brick', '磚'], ['mortar', '水泥砂漿'], ['tile', '磁磚'], ['paint', '油漆']].map(([k, n]) => `<label for="ls_${k}">${n}<input type="number" id="ls_${k}" data-loss="${k}" value="${P.loss[k]}"></label>`).join('')}
+  </div>
+  <div class="actions"><button class="btn small" id="resetFinish" type="button">恢復預設值</button><span class="small muted">設定會記在這台電腦的瀏覽器裡,下次打開還在。</span></div>`;
+  el.innerHTML = h;
+  el.querySelectorAll('[data-k]').forEach(c => { const k = c.dataset.k, f = c.dataset.f; if (c.tagName === 'SELECT') c.value = String(F[k][f]); c.addEventListener('change', e => { F[k][f] = e.target.value; saveLocal(); if (S.A) recompute(); }); });
+  const rb = { rbSlab: 'slab', rbBeam: 'beam', rbCol: 'column', rbWall: 'wall' };
+  for (const id in rb) $('#' + id).addEventListener('change', e => { P.rebar[rb[id]] = parseFloat(e.target.value) || 0; saveLocal(); if (S.A) recompute(); });
+  $('#bk12').addEventListener('change', e => { P.brickPerM2[12] = parseFloat(e.target.value) || 64; P.brickPerM2[10] = P.brickPerM2[12]; saveLocal(); if (S.A) recompute(); });
+  $('#bk24').addEventListener('change', e => { P.brickPerM2[24] = parseFloat(e.target.value) || 128; P.brickPerM2[20] = P.brickPerM2[24]; saveLocal(); if (S.A) recompute(); });
+  el.querySelectorAll('[data-loss]').forEach(c => c.addEventListener('change', e => { P.loss[e.target.dataset.loss] = parseFloat(e.target.value) || 0; saveLocal(); if (S.A) recompute(); }));
+  $('#resetFinish').addEventListener('click', () => { const d = QE.defaultParams(); S.finishes = QE.defaultFinishes(); P.rebar = d.rebar; P.brickPerM2 = d.brickPerM2; P.loss = d.loss; saveLocal(); if (S.A) recompute(); renderFinish(); });
+}
+
+/* ---------------- 專案 ---------------- */
+function addFloor() {
+  readParams();
+  const name = $('#pName').value || ('樓層 ' + (S.project.floors.length + 1));
+  S.project.floors.push({
+    name, repeat: S.params.repeat, file: S.fileName, floorArea: S.Q.summary.floorArea,
+    params: { floorH: S.params.floorH, slabT: S.params.slabT, ceilH: S.params.ceilH },
+    items: S.Q.items.map(it => ({ trade: it.trade, item: it.item, unit: it.unit, qty: it.qty, loss: it.loss, total: it.total })),
+    rooms: S.Q.roomDetail.map(r => ({ name: r.name, type: r.type, area: r.area, perim: r.perim, floor: r.floor, wallTile: r.wallTile, wallPaint: r.wallPaint, ceilPaint: r.ceilPaint })),
+  });
+  saveLocal(); toast(`已加入:${name} × ${S.params.repeat}`); renderTab();
+}
+function projectTotals() {
+  const m = new Map(); const order = [];
+  const useElev = S.project.elevs && S.project.elevs.length > 0;
+  const srcs = S.project.floors.map(f => ({ rep: f.repeat, items: useElev ? f.items.filter(i => !/^外牆/.test(i.item)) : f.items }))
+    .concat((S.project.elevs || []).map(e => ({ rep: 1, items: e.items })));
+  for (const f of srcs) for (const it of f.items) {
+    if (/小計/.test(it.item)) continue;
+    const k = it.trade + '|' + it.item + '|' + it.unit;
+    if (!m.has(k)) { m.set(k, { trade: it.trade, item: it.item, unit: it.unit, qty: 0, total: 0, loss: it.loss, note: '' }); order.push(k); }
+    const e = m.get(k); e.qty += it.qty * f.rep; e.total += it.total * f.rep;
+  }
+  const tradeOrder = ['結構', '泥作', '磁磚', '石材', '油漆', '其他'];
+  return order.map(k => m.get(k)).sort((a, b) => tradeOrder.indexOf(a.trade) - tradeOrder.indexOf(b.trade));
+}
+function renderProject() {
+  const el = $('#tab-project');
+  const fl = S.project.floors;
+  const ev = S.project.elevs || [];
+  if (!fl.length && !ev.length) { el.innerHTML = '<p class="muted">每算完一層或一個立面,按「加入專案總表」。這裡會把所有樓層 × 層數、各向立面加總,並可匯出 Excel。</p>'; return; }
+  const totalArea = fl.reduce((s, f) => s + f.floorArea * f.repeat, 0) || 0;
+  let h = `<div class="tiles"><div class="tile"><span>總樓地板面積</span><b>${fmt(totalArea, 1)}</b><small>m²</small><small>${fmt(totalArea / PING, 1)} 坪</small></div><div class="tile"><span>樓層組數</span><b>${fl.length}</b><small>共 ${fl.reduce((s, f) => s + f.repeat, 0)} 層</small></div></div>`;
+  h += '<div class="tablewrap"><table class="q"><thead><tr><th>樓層</th><th style="text-align:right">層數</th><th style="text-align:right">單層面積 m²</th><th style="text-align:right">樓高 cm</th><th>來源檔</th><th></th></tr></thead><tbody>';
+  fl.forEach((f, i) => { h += `<tr><td>${esc(f.name)}</td><td class="n"><input type="number" min="1" value="${f.repeat}" data-rep="${i}" style="width:60px" aria-label="層數"></td><td class="n">${fmt(f.floorArea)}</td><td class="n">${f.params.floorH}</td><td class="small muted">${esc(f.file)}</td><td><button class="btn small" data-del="${i}" type="button">移除</button></td></tr>`; });
+  h += '</tbody></table></div>';
+  if (ev.length) {
+    h += '<h3 style="font-size:14px;margin:18px 0 8px">立面(外牆)</h3><div class="tablewrap"><table class="q"><thead><tr><th>立面</th><th style="text-align:right">立面總面積</th><th style="text-align:right">開口</th><th style="text-align:right">欄杆/透空</th><th style="text-align:right">外牆淨面積</th><th>材料</th><th></th></tr></thead><tbody>';
+    ev.forEach((e, i) => { h += `<tr><td>${esc(e.name)}</td><td class="n">${fmt(e.facade)}</td><td class="n">${fmt(e.open)}</td><td class="n">${fmt(e.rail)}</td><td class="n">${fmt(e.wall)}</td><td class="small">${e.mats.map(m => esc(m.name) + ' ' + fmt(m.area, 1)).join('、')}</td><td><button class="btn small" data-edel="${i}" type="button">移除</button></td></tr>`; });
+    h += '</tbody></table></div><p class="small muted">已有立面資料,總表中的外牆打底、外牆磚改用立面結果。</p>';
+  }
+  h += '<h3 style="font-size:14px;margin:18px 0 8px">全案數量</h3>';
+  h += itemsTable(projectTotals().map(it => ({ ...it, loss: it.loss })), 1);
+  h += `<div class="actions"><button class="btn primary" id="xlsBtn" type="button">匯出 Excel</button><button class="btn" id="copyBtn" type="button">複製總表</button><button class="btn" id="clearBtn" type="button">清空專案</button></div>`;
+  el.innerHTML = h;
+  el.querySelectorAll('[data-rep]').forEach(c => c.addEventListener('change', e => { fl[+e.target.dataset.rep].repeat = Math.max(1, parseInt(e.target.value) || 1); saveLocal(); renderProject(); }));
+  el.querySelectorAll('[data-del]').forEach(c => c.addEventListener('click', e => { fl.splice(+e.target.dataset.del, 1); saveLocal(); renderTab(); }));
+  el.querySelectorAll('[data-edel]').forEach(c => c.addEventListener('click', e => { ev.splice(+e.target.dataset.edel, 1); saveLocal(); renderTab(); }));
+  $('#xlsBtn').addEventListener('click', exportXLSX);
+  $('#copyBtn').addEventListener('click', async () => { const rows = [['工種', '項目', '單位', '數量', '損耗%', '含損耗']].concat(projectTotals().map(t => [t.trade, t.item, t.unit, t.qty.toFixed(2), t.loss, t.total.toFixed(2)])); try { await navigator.clipboard.writeText(rows.map(r => r.join('\t')).join('\n')); toast('已複製,可直接貼到 Excel'); } catch (e) { toast('無法使用剪貼簿'); } });
+  $('#clearBtn').addEventListener('click', () => { if (el.dataset.confirm !== '1') { el.dataset.confirm = '1'; $('#clearBtn').textContent = '再按一次確認清空'; return; } S.project.floors = []; S.project.elevs = []; el.dataset.confirm = ''; saveLocal(); renderTab(); });
+}
+
+async function exportXLSX() {
+  const name = $('#projName').value || '建材數量';
+  const H = s => ({ v: s, s: 1 });
+  const date = new Date().toLocaleDateString('zh-TW');
+  const tot = projectTotals();
+  const sum = [[{ v: ($('#projName').value ? $('#projName').value + ' ' : '') + '建材數量總表', s: 5 }], ['製表日期', date], ['', ''], [H('工種'), H('項目'), H('單位'), H('數量'), H('損耗%'), H('含損耗數量'), H('坪')]];
+  let last = null;
+  for (const t of tot) { if (t.trade !== last) { sum.push([{ v: t.trade, s: 3 }]); last = t.trade; } sum.push([t.trade, t.item, t.unit, t.qty, t.loss, t.total, t.unit === 'm²' ? t.total / PING : '']); }
+  const sheets = [{ name: '總表', rows: sum, widths: [8, 34, 6, 14, 8, 14, 10], freeze: 4 }];
+  const ev = S.project.elevs || [];
+  if (ev.length) {
+    const er = [[{ v: '立面(外牆)', s: 5 }], [], [H('立面'), H('立面總面積 m²'), H('開口 m²'), H('欄杆/透空 m²'), H('外牆淨面積 m²'), H('材料分區')]];
+    for (const e of ev) er.push([e.name, e.facade, e.open, e.rail, e.wall, e.mats.map(m => m.name + ' ' + m.area.toFixed(2) + ' m²').join('、')]);
+    er.push([]); er.push([{ v: '外牆數量已改用立面結果(不使用平面周長 × 樓高)', s: 0 }]);
+    sheets.push({ name: '立面外牆', rows: er, widths: [16, 14, 12, 14, 14, 60], freeze: 3 });
+  }
+  for (const tr of ['結構', '泥作', '磁磚', '油漆']) {
+    const items = [...new Set(S.project.floors.flatMap(f => f.items.filter(i => i.trade === tr).map(i => i.item + '|' + i.unit)))];
+    if (!items.length) continue;
+    const head = [H('項目'), H('單位')].concat(S.project.floors.map(f => H(f.name + ' ×' + f.repeat))).concat([H('合計(含層數)'), H('損耗%'), H('含損耗')]);
+    const rows = [[{ v: tr + ' 各樓層數量', s: 5 }], [], head];
+    for (const k of items) {
+      const [item, unit] = k.split('|');
+      let total = 0, totalL = 0, loss = 0;
+      const per = S.project.floors.map(f => { const it = f.items.find(i => i.item === item && i.unit === unit); if (it) { total += it.qty * f.repeat; totalL += it.total * f.repeat; loss = it.loss; return it.qty; } return ''; });
+      rows.push([/小計/.test(item) ? { v: item, s: 3 } : item, unit].concat(per).concat([total, loss, totalL]));
+    }
+    sheets.push({ name: tr, rows, widths: [34, 6].concat(S.project.floors.map(() => 14)).concat([14, 8, 14]), freeze: 3 });
+  }
+  const rr = [[{ v: '空間明細(單層)', s: 5 }], [], [H('樓層'), H('層數'), H('空間'), H('類型'), H('面積 m²'), H('周長 m'), H('地坪'), H('壁磚 m²'), H('牆面油漆 m²'), H('天花油漆 m²')]];
+  for (const f of S.project.floors) for (const r of f.rooms) rr.push([f.name, f.repeat, r.name, TYPE_NAME[r.type] || r.type, r.area, r.perim, r.floor, r.wallTile, r.wallPaint, r.ceilPaint]);
+  sheets.push({ name: '空間明細', rows: rr, widths: [14, 6, 14, 10, 10, 10, 14, 10, 12, 12], freeze: 3 });
+  const P = S.params;
+  const pr = [[{ v: '計算假設', s: 5 }], [], [H('項目'), H('數值')],
+    ['樓層參數', S.project.floors.map(f => `${f.name}:樓高 ${f.params.floorH} cm、版厚 ${f.params.slabT} cm、天花 ${f.params.ceilH} cm`).join(';')],
+    ['含筋率 kg/m³', `版 ${P.rebar.slab}、梁 ${P.rebar.beam}、柱 ${P.rebar.column}、牆 ${P.rebar.wall}`],
+    ['紅磚 塊/m²', `1/2B ${P.brickPerM2[12]}、1B ${P.brickPerM2[24]}`],
+    ['損耗率 %', Object.entries(P.loss).map(([k, v]) => ({ concrete: '混凝土', rebar: '鋼筋', brick: '磚', mortar: '砂漿', tile: '磁磚', paint: '油漆', form: '模板' }[k] || k) + ' ' + v).join('、')],
+    ['說明', '牆長 = 牆圖層線長 ÷ 2(去除牆頭);門窗上方/下方的牆面已補回;空間由空間名稱文字自動圍出。數量為估算,請以施工圖核對。']];
+  for (const k in TYPE_NAME) { const f = S.finishes[k]; pr.push([TYPE_NAME[k], `地坪 ${f.floor} ${f.floorTile};牆 ${f.wall} ${f.wallTile} 高 ${f.tileH};天花 ${f.ceil}`]); }
+  sheets.push({ name: '計算假設', rows: pr, widths: [16, 100] });
+  const bytes = QE.buildXLSX(sheets);
+  await saveFile(`${name}_建材數量_${date.replace(/\//g, '')}.xlsx`, bytes);
+}
+async function saveFile(filename, bytes) {
+  try {
+    const dl = window.claude && window.claude.use ? await window.claude.use('downloads') : null;
+    if (dl) { await dl.save({ filename, data: new Blob([bytes]) }); toast('已儲存 ' + filename); return; }
+  } catch (e) { if (e && e.code === 'declined') return; console.warn(e); }
+  try {
+    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+    const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+  } catch (e) { toast('這個檢視不能下載檔案,請改用「複製總表」'); }
+}
+$('#projName').addEventListener('change', e => { S.project.name = e.target.value; saveLocal(); });
+
+/* ---------------- 圖面檢視 ---------------- */
+const cv = $('#cv'); const ctx = cv.getContext('2d');
+let W = 0, Hh = 0, dpr = 1;
+function resize() { const r = cv.getBoundingClientRect(); dpr = window.devicePixelRatio || 1; W = r.width; Hh = r.height; cv.width = Math.round(W * dpr); cv.height = Math.round(Hh * dpr); draw(); }
+new ResizeObserver(resize).observe(cv);
+const w2s = (x, y) => [(x - S.view.cx) * S.view.s + W / 2, Hh / 2 - (y - S.view.cy) * S.view.s];
+const s2w = (x, y) => [(x - W / 2) / S.view.s + S.view.cx, (Hh / 2 - y) / S.view.s + S.view.cy];
+function fit() { if (!S.ext) return; zoomTo(S.ext); }
+function zoomTo(b) { if (!b) return; S.view.cx = (b[0] + b[2]) / 2; S.view.cy = (b[1] + b[3]) / 2; S.view.s = Math.min(W / ((b[2] - b[0]) * 1.08 || 1), Hh / ((b[3] - b[1]) * 1.08 || 1)); draw(); }
+$('#fitBtn').addEventListener('click', fit);
+$('#zoomBoxBtn').addEventListener('click', () => S.box && zoomTo(S.box));
+$('#boxBtn').addEventListener('click', () => { S.mode = S.mode === 'box' ? 'pan' : 'box'; $('#boxBtn').classList.toggle('on', S.mode === 'box'); cv.style.cursor = S.mode === 'box' ? 'crosshair' : 'grab'; });
+$('#roomsBtn').addEventListener('click', () => { S.showRooms = !S.showRooms; $('#roomsBtn').classList.toggle('on', S.showRooms); draw(); });
+
+// 依顏色分組的繪圖快取
+let groups = [];
+function buildRenderCache() {
+  if (!S.F) return;
+  const byCol = new Map();
+  const roleOf = S.kind === 'elev' ? S.F.layerNames.map(n => ({ outline: 'wall_rc', opening: 'window', rail: 'rail', material: 'wall_light' }[(S.eroles[n] || {}).role] || 'ignore')) : S.F.layerNames.map(n => (S.roles[n] || { role: 'ignore' }).role);
+  S.F.polys.forEach((p, i) => { const r = roleOf[p.L]; const k = r === 'ignore' ? 'ignore' : r; if (!byCol.has(k)) byCol.set(k, []); byCol.get(k).push(i); });
+  groups = [...byCol.entries()].sort((a, b) => (a[0] === 'ignore' ? -1 : 0) - (b[0] === 'ignore' ? -1 : 0));
+  const leg = $('#legend');
+  if (S.kind === 'elev') { const m = { wall_rc: '外牆輪廓', window: '開口(門窗)', rail: '欄杆/透空', wall_light: '材料填充' }; leg.innerHTML = Object.entries(m).filter(([k]) => byCol.has(k)).map(([k, v]) => `<span><span class="swatch" style="background:${ROLE_COLOR[k]}"></span>${v}</span>`).join('') + (S.E ? '<span><span class="swatch" style="background:#60a5fa"></span>開口</span><span><span class="swatch" style="background:#14b8a6"></span>欄杆</span>' : ''); return; }
+  leg.innerHTML = Object.entries(QE.ROLES).filter(([k]) => k !== 'ignore' && byCol.has(k)).map(([k, v]) => `<span><span class="swatch" style="background:${ROLE_COLOR[k]}"></span>${v}</span>`).join('') + (S.A ? Object.entries(TYPE_NAME).map(([k, v]) => `<span><span class="swatch" style="background:${TYPE_COLOR[k]};opacity:.6"></span>${v}</span>`).join('') : '');
+}
+let raf = 0;
+function draw() { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; drawNow(); }); }
+function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+function drawNow() {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = cssVar('--canvas'); ctx.fillRect(0, 0, W, Hh);
+  if (!S.F) return;
+  const [vx0, vy1] = s2w(0, 0), [vx1, vy0] = s2w(W, Hh);
+  const s = S.view.s, cx = S.view.cx, cy = S.view.cy, hw = W / 2, hh = Hh / 2;
+  const minSz = 0.8 / s;
+  const dark = cssVar('--ink');
+  for (const [k, idx] of groups) {
+    ctx.beginPath();
+    ctx.strokeStyle = k === 'ignore' ? cssVar('--muted') : ROLE_COLOR[k];
+    ctx.globalAlpha = k === 'ignore' ? 0.45 : 1;
+    ctx.lineWidth = k === 'ignore' ? 0.6 : 1.1;
+    for (const i of idx) {
+      const p = S.F.polys[i], b = p.bb;
+      if (b[2] < vx0 || b[0] > vx1 || b[3] < vy0 || b[1] > vy1) continue;
+      if (b[2] - b[0] < minSz && b[3] - b[1] < minSz) continue;
+      const q = p.p;
+      ctx.moveTo((q[0] - cx) * s + hw, hh - (q[1] - cy) * s);
+      for (let j = 2; j < q.length; j += 2) ctx.lineTo((q[j] - cx) * s + hw, hh - (q[j + 1] - cy) * s);
+    }
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  // 文字
+  ctx.fillStyle = dark; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  let tc = 0;
+  for (const t of S.F.texts) {
+    const px = t.h * s; if (px < 7) continue;
+    if (t.x < vx0 || t.x > vx1 || t.y < vy0 || t.y > vy1) continue;
+    if (++tc > 2500) break;
+    ctx.font = `${Math.min(28, px)}px ${cssVar('--font-body')}`;
+    ctx.globalAlpha = 0.75;
+    ctx.fillText(t.s, (t.x - cx) * s + hw, hh - (t.y - cy) * s);
+  }
+  ctx.globalAlpha = 1;
+  // 分析結果
+  if (S.A && S.showRooms) {
+    for (const r of S.A.rooms) {
+      if (r.status !== 'ok' || !r.outline) continue;
+      const ov = S.overrides[r.id] || {};
+      const type = ov.type || QE.mergedType(r);
+      ctx.beginPath();
+      for (const lp of r.outline) { lp.forEach((q, j) => { const [x, y] = w2s(q[0], q[1]); j ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.closePath(); }
+      ctx.fillStyle = TYPE_COLOR[type]; ctx.globalAlpha = ov.exclude ? 0.08 : 0.35; ctx.fill('evenodd');
+      ctx.globalAlpha = 0.9; ctx.strokeStyle = TYPE_COLOR[type]; ctx.lineWidth = 1.2; ctx.stroke();
+      ctx.globalAlpha = 1;
+      if (r.area && S.view.s * S.unit * 100 > 12) {
+        const [x, y] = w2s(r.x, r.y);
+        ctx.font = `500 12px ${cssVar('--font-num')}`; ctx.fillStyle = dark;
+        ctx.fillText(fmt(r.area, 1) + ' m²', x, y + 14);
+      }
+    }
+    for (const r of S.A.rooms) if (r.status !== 'ok') { const [x, y] = w2s(r.x, r.y); ctx.beginPath(); ctx.arc(x, y, 7, 0, Math.PI * 2); ctx.strokeStyle = cssVar('--bad'); ctx.lineWidth = 2; ctx.stroke(); }
+    ctx.lineWidth = 2;
+    for (const o of S.A.openings) {
+      ctx.strokeStyle = o.kind === 'door' ? ROLE_COLOR.door : ROLE_COLOR.window;
+      const seg = o.chord || [o.box[0], o.box[1]];
+      if (o.kind === 'window') { ctx.beginPath(); o.box.forEach((q, j) => { const [x, y] = w2s(q[0], q[1]); j ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.closePath(); ctx.stroke(); }
+      else { const [x0, y0] = w2s(seg[0][0], seg[0][1]), [x1, y1] = w2s(seg[1][0], seg[1][1]); ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke(); }
+    }
+    for (const c of S.A.columns) { const [x, y] = w2s(c.cx, c.cy); const ww = c.w / S.unit * s, hh2 = c.h / S.unit * s; ctx.fillStyle = ROLE_COLOR.column; ctx.globalAlpha = 0.5; ctx.fillRect(x - ww / 2, y - hh2 / 2, ww, hh2); ctx.globalAlpha = 1; }
+    if (S.A.footprint.outline) { ctx.beginPath(); for (const lp of S.A.footprint.outline) { lp.forEach((q, j) => { const [x, y] = w2s(q[0], q[1]); j ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.closePath(); } ctx.strokeStyle = cssVar('--accent'); ctx.setLineDash([6, 4]); ctx.lineWidth = 1.5; ctx.stroke(); ctx.setLineDash([]); }
+  }
+  if (S.E && S.showRooms && S.kind === 'elev') {
+    if (!S.E.overlay) S.E.overlay = elevOverlay(S.E);
+    const E = S.E; const [x0, y0] = w2s(E.box[0] - E.px, E.box[1] - E.px + E.ny * E.px);
+    ctx.globalAlpha = 0.55; ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(E.overlay, x0, y0, E.nx * E.px * s, E.ny * E.px * s);
+    ctx.globalAlpha = 1;
+  }
+  if (S.kind === 'elev') for (const z of S.zones) { const [x0, y0] = w2s(z.box[0], z.box[3]), [x1, y1] = w2s(z.box[2], z.box[1]); ctx.strokeStyle = z.mat === '不計' ? cssVar('--bad') : '#a16207'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]); ctx.strokeRect(x0, y0, x1 - x0, y1 - y0); ctx.setLineDash([]); ctx.fillStyle = ctx.strokeStyle; ctx.font = `12px ${cssVar('--font-body')}`; ctx.textAlign = 'left'; ctx.fillText(z.mat, x0 + 4, y0 + 12); ctx.textAlign = 'center'; }
+  if (S.box) {
+    const [x0, y0] = w2s(S.box[0], S.box[3]), [x1, y1] = w2s(S.box[2], S.box[1]);
+    ctx.strokeStyle = cssVar('--accent'); ctx.lineWidth = 2; ctx.setLineDash([8, 5]); ctx.strokeRect(x0, y0, x1 - x0, y1 - y0); ctx.setLineDash([]);
+  }
+  if (drag && drag.box) { ctx.strokeStyle = cssVar('--accent'); ctx.lineWidth = 1.5; ctx.fillStyle = cssVar('--accent-soft'); ctx.globalAlpha = 0.4; const x = Math.min(drag.x0, drag.x), y = Math.min(drag.y0, drag.y); ctx.fillRect(x, y, Math.abs(drag.x - drag.x0), Math.abs(drag.y - drag.y0)); ctx.globalAlpha = 1; ctx.strokeRect(x, y, Math.abs(drag.x - drag.x0), Math.abs(drag.y - drag.y0)); }
+  if (flash) { const [x, y] = w2s(flash[0], flash[1]); ctx.beginPath(); ctx.arc(x, y, 16, 0, Math.PI * 2); ctx.strokeStyle = cssVar('--bad'); ctx.lineWidth = 3; ctx.stroke(); }
+}
+const MAT_COLORS = ['#d6b98c', '#6b7280', '#7fb27f', '#c084fc', '#f59e0b', '#94a3b8', '#e879f9', '#a3e635'];
+function elevOverlay(E) {
+  const c = document.createElement('canvas'); c.width = E.nx; c.height = E.ny;
+  const g2 = c.getContext('2d'); const img = g2.createImageData(E.nx, E.ny);
+  const rgb = h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+  const mc = E.mats.map((m, i) => rgb(MAT_COLORS[i % MAT_COLORS.length]));
+  const op = rgb('#60a5fa'), rl = rgb('#14b8a6');
+  for (let y = 0; y < E.ny; y++) for (let x = 0; x < E.nx; x++) {
+    const i = y * E.nx + x, k = E.raster[i]; if (!k) continue;
+    const col = k === 1 ? mc[E.matIdx[i]] : k === 2 ? op : rl;
+    const o = ((E.ny - 1 - y) * E.nx + x) * 4; img.data[o] = col[0]; img.data[o + 1] = col[1]; img.data[o + 2] = col[2]; img.data[o + 3] = 255;
+  }
+  g2.putImageData(img, 0, 0); return c;
+}
+let drag = null;
+cv.addEventListener('pointerdown', e => {
+  if (!S.F) return;
+  cv.setPointerCapture(e.pointerId);
+  const r = cv.getBoundingClientRect(); const x = e.clientX - r.left, y = e.clientY - r.top;
+  drag = { x0: x, y0: y, x, y, cx: S.view.cx, cy: S.view.cy, box: S.mode === 'box' || S.mode === 'zone' || e.shiftKey, zone: S.mode === 'zone' };
+});
+cv.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const r = cv.getBoundingClientRect(); drag.x = e.clientX - r.left; drag.y = e.clientY - r.top;
+  if (!drag.box) { S.view.cx = drag.cx - (drag.x - drag.x0) / S.view.s; S.view.cy = drag.cy + (drag.y - drag.y0) / S.view.s; }
+  draw();
+});
+cv.addEventListener('pointerup', e => {
+  if (!drag) return;
+  if (drag.zone && Math.abs(drag.x - drag.x0) > 4 && Math.abs(drag.y - drag.y0) > 4) {
+    const a = s2w(drag.x0, drag.y0), b = s2w(drag.x, drag.y);
+    S.zones.push({ mat: $('#zoneMat').value || '石材', box: [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])] });
+    renderZones(); if (S.E) runElev();
+    drag = null; draw(); return;
+  }
+  if (drag.box && Math.abs(drag.x - drag.x0) > 8 && Math.abs(drag.y - drag.y0) > 8) {
+    const a = s2w(drag.x0, drag.y0), b = s2w(drag.x, drag.y);
+    S.activeTitle = null; renderTitles();
+    setBox([Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])]);
+    S.mode = 'pan'; $('#boxBtn').classList.remove('on'); cv.style.cursor = 'grab';
+  }
+  drag = null; flash = null; draw();
+});
+cv.addEventListener('wheel', e => {
+  if (!S.F) return; e.preventDefault();
+  const r = cv.getBoundingClientRect(); const x = e.clientX - r.left, y = e.clientY - r.top;
+  const before = s2w(x, y); const k = Math.exp(-e.deltaY * 0.0015);
+  S.view.s *= k; const after = s2w(x, y);
+  S.view.cx += before[0] - after[0]; S.view.cy += before[1] - after[1];
+  draw();
+}, { passive: false });
+cv.style.cursor = 'grab';
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', draw);
+
+/* ---------------- 示範平面圖 ---------------- */
+function demoDXF() {
+  // 10.6 m × 8.2 m 兩房一廳示範(單位 cm)
+  const out = [];
+  const g = (c, v) => out.push(String(c), String(v));
+  const line = (lay, x1, y1, x2, y2) => { g(0, 'LINE'); g(8, lay); g(10, x1); g(20, y1); g(11, x2); g(21, y2); };
+  const rect = (lay, x, y, w, h) => { g(0, 'LWPOLYLINE'); g(8, lay); g(90, 4); g(70, 1); [[x, y], [x + w, y], [x + w, y + h], [x, y + h]].forEach(p => { g(10, p[0]); g(20, p[1]); }); };
+  const text = (lay, s, x, y, h) => { g(0, 'TEXT'); g(8, lay); g(10, x); g(20, y); g(40, h); g(1, s); g(72, 1); g(11, x); g(21, y); g(73, 2); };
+  const ins = (name, lay, x, y, rot) => { g(0, 'INSERT'); g(8, lay); g(2, name); g(10, x); g(20, y); g(41, 1); g(42, 1); g(50, rot || 0); };
+  g(0, 'SECTION'); g(2, 'HEADER'); g(9, '$ACADVER'); g(1, 'AC1027'); g(9, '$INSUNITS'); g(70, 5); g(0, 'ENDSEC');
+  g(0, 'SECTION'); g(2, 'BLOCKS');
+  // 門 90 cm:原點在鉸鏈
+  g(0, 'BLOCK'); g(8, '0'); g(2, 'D90'); g(70, 0); g(10, 0); g(20, 0);
+  line('0', 0, 0, 0, 90); g(0, 'ARC'); g(8, '0'); g(10, 0); g(20, 0); g(40, 90); g(50, 0); g(51, 90);
+  g(0, 'ENDBLK'); g(8, '0');
+  g(0, 'BLOCK'); g(8, '0'); g(2, 'W150'); g(70, 0); g(10, 0); g(20, 0);
+  line('0', 0, 0, 150, 0); line('0', 0, 7.5, 150, 7.5); line('0', 0, 15, 150, 15); line('0', 0, 0, 0, 15); line('0', 150, 0, 150, 15);
+  g(0, 'ENDBLK'); g(8, '0');
+  g(0, 'ENDSEC');
+  g(0, 'SECTION'); g(2, 'ENTITIES');
+  const RC = 'A-15cmRC', BR = 'A-10cm 1/2B磚牆';
+  // 外牆 (15 cm):外框 0,0 ~ 1060,820 ,窗洞在南面 (200~350) 與 (650~800),北面 (450~600)
+  const W = 1060, Hh = 820, t = 15;
+  const segH = (y0, y1, x0, x1, gaps) => { let xs = [x0]; for (const gp of gaps) xs.push(gp[0], gp[1]); xs.push(x1); for (let i = 0; i < xs.length; i += 2) { line(RC, xs[i], y0, xs[i + 1], y0); line(RC, xs[i], y1, xs[i + 1], y1); if (i > 0) { line(RC, xs[i], y0, xs[i], y1); } if (i + 2 < xs.length) line(RC, xs[i + 1], y0, xs[i + 1], y1); } };
+  segH(0, t, 0, W, [[200, 350], [650, 800]]);
+  segH(Hh - t, Hh, 0, W, [[450, 600], [880, 970]]);
+  line(RC, 0, 0, 0, Hh); line(RC, t, t, t, Hh - t); line(RC, W, 0, W, Hh); line(RC, W - t, t, W - t, Hh - t);
+  ins('W150', 'window', 200, 0); ins('W150', 'window', 650, 0); ins('W150', 'window', 450, Hh - t);
+  // 大門 (北面 880~970)
+  ins('D90', 'DOOR', 880, Hh - t, -90);
+  // 內牆 (磚 10 cm):x=400 隔間(臥室|客廳) 由 y=15 到 520,門洞 400~490 (y)
+  const wv = (x, y0, y1) => { line(BR, x, y0, x, y1); line(BR, x + 10, y0, x + 10, y1); };
+  const wh = (y, x0, x1) => { line(BR, x0, y, x1, y); line(BR, x0, y + 10, x1, y + 10); };
+  wv(400, t, 380); wv(400, 470, 520); line(BR, 400, 380, 410, 380); line(BR, 400, 470, 410, 470);
+  ins('D90', 'DOOR', 410, 380, 90);
+  // 臥室2 / 浴室 之間 y=520 牆
+  wh(520, t, 410); line(BR, 410, 520, 410, 530);
+  // 浴室 x 15~250 , y 530~805 ; 廚房 x 260~410
+  wv(250, 530, 640); wv(250, 730, Hh - t); line(BR, 250, 640, 260, 640); line(BR, 250, 730, 260, 730);
+  ins('D90', 'DOOR', 260, 640, 90);
+  // 浴室門開向廚房,廚房開放到客廳(y=530 以上 x 260~410)
+  wh(520, 410, 410); // no-op
+  // 臥室1 門:由客廳進入,牆 x=400 已含門洞
+  // 柱 4 支 50x50
+  [[0, 0], [W - 50, 0], [0, Hh - 50], [W - 50, Hh - 50]].forEach(c => rect('A-柱CO', c[0], c[1], 50, 50));
+  // 陽台 (南側外 120 cm,欄杆)
+  line('A-欄杆Rail', 600, 0, 600, -120); line('A-欄杆Rail', 600, -120, W, -120); line('A-欄杆Rail', W, -120, W, 0);
+  line('A-欄杆Rail', 610, 0, 610, -110); line('A-欄杆Rail', 610, -110, W - 10, -110); line('A-欄杆Rail', W - 10, -110, W - 10, 0);
+  // 陽台門 (南面 880~970 改為落地門)
+  text('TEXT', '臥室', 200, 260, 22); text('TEXT', '客廳', 700, 420, 22); text('TEXT', '浴室', 130, 680, 20); text('TEXT', '廚房', 330, 690, 20); text('TEXT', '陽台', 820, -60, 20);
+  text('A4-文字', '示範層平面圖', 530, -220, 40);
+  g(0, 'ENDSEC'); g(0, 'EOF');
+  return out.join('\n');
+}
+
+/* ---------------- 啟動 ---------------- */
+loadLocal(); writeParams();
+if (S.project.name) $('#projName').value = S.project.name;
+renderTab();
+</script>
+</body>
+</html>
