@@ -1305,6 +1305,18 @@ function findPlanTitles(F) {
     if (out.some(o => o.s === t.s && Math.hypot(o.x - t.x, o.y - t.y) < t.h * 5)) continue;
     out.push(t);
   }
+  // 同一個圖名出現多次時,只留字高接近最大的(圖框標題欄、圖說裡的小字不是平面圖)
+  const maxH = {}; for (const t of out) maxH[t.s] = Math.max(maxH[t.s] || 0, t.h || 0);
+  for (let i = out.length - 1; i >= 0; i--) if ((out[i].h || 0) < maxH[out[i].s] * 0.6) out.splice(i, 1);
+  // 照樓層由下往上排:地下 → 一層 → 夾層 → … → 屋突 → 屋頂
+  const lv = s => {
+    const m = /([\d一二三四五六七八九十兩]+)\s*(?:夾層|[層樓F])/.exec(s); const n = m ? cnNum(m[1]) : NaN;
+    if (/屋頂/.test(s) && !/屋突/.test(s)) return 2000;
+    if (/屋突/.test(s)) return 1000 + (isNaN(n) ? 0 : n);
+    if (/地下/.test(s)) return -(isNaN(n) ? 1 : n);
+    return (isNaN(n) ? 500 : n) + (/夾層/.test(s) ? 0.5 : 0);
+  };
+  out.sort((a, b) => lv(a.s) - lv(b.s));
   return out.map(t => ({ title: t.s, x: t.x, y: t.y, h: t.h, repeat: floorRepeat(t.s) }));
 }
 function planBoxNearTitle(F, t, layerRoles, opt) {
