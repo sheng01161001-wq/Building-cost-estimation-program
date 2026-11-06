@@ -806,7 +806,7 @@ async function exportXLSX() {
     ['紅磚 塊/m²', `1/2B ${P.brickPerM2[12]}、1B ${P.brickPerM2[24]}`],
     ['白磚 / 輕隔間', `白磚 ${P.blockSize} cm;輕隔間板材 ${P.boardSize} cm × 每面 ${P.boardLayers} 層,立柱間距 ${P.studSpacing} cm`],
     ['損耗率 %', Object.entries(P.loss).map(([k, v]) => ({ concrete: '混凝土', rebar: '鋼筋', brick: '磚', mortar: '砂漿', tile: '磁磚', paint: '油漆', form: '模板' }[k] || k) + ' ' + v).join('、')],
-    ['說明', '牆長 = 牆圖層線長 ÷ 2(去除牆頭);門窗上方/下方的牆面已補回;空間由空間名稱文字自動圍出。數量為估算,請以施工圖核對。']];
+    ['說明', '牆長 = 兩條平行牆線、間距約等於牆厚的重疊長度 ÷ 2(管道間格子、符號、重複線不算);門窗上方/下方的牆面已補回;空間由空間名稱文字自動圍出。數量為估算,請以施工圖核對。']];
   for (const k in TYPE_NAME) { const f = S.finishes[k]; pr.push([TYPE_NAME[k], `地坪 ${f.floor} ${f.floorTile};牆 ${f.wall} ${f.wallTile} 高 ${f.tileH};天花 ${f.ceil}`]); }
   sheets.push({ name: '計算假設', rows: pr, widths: [16, 100] });
   const bytes = QE.buildXLSX(sheets);

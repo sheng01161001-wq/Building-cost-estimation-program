@@ -1178,24 +1178,57 @@ function dp(pts, eps) {
 }
 
 /* 牆長:各牆圖層線段總長 / 2(兩面線),去除牆頭短線 */
+// 牆長:只算「有另一條平行線、間距約等於牆厚」的那一段(兩面牆線重疊的部分),再除以 2。
+// 這樣管道間小格子、符號、凸窗鋸齒線、重複畫的線都不會被當成牆。
 function wallLengths(polys, roleOf, U) {
-  const res = {};
+  const res = {}, segsOf = {};
   for (const p of polys) {
     const ro = roleOf[p.L];
     if (!ro.role.startsWith('wall_')) continue;
     const thk = ro.thk || 15;
     const key = ro.role + '|' + thk;
-    if (!res[key]) res[key] = { role: ro.role, thk, len: 0, raw: 0, layers: new Set() };
+    if (!res[key]) { res[key] = { role: ro.role, thk, len: 0, raw: 0, layers: new Set() }; segsOf[key] = { segs: [], seen: new Set() }; }
     res[key].layers.add(p.L);
-    const q = p.p;
+    const q = p.p, S = segsOf[key];
     for (let i = 0; i + 3 < q.length; i += 2) {
-      const l = Math.hypot(q[i + 2] - q[i], q[i + 3] - q[i + 1]) * U;
+      const x0 = q[i] * U, y0 = q[i + 1] * U, x1 = q[i + 2] * U, y1 = q[i + 3] * U; // cm
+      const l = Math.hypot(x1 - x0, y1 - y0);
       res[key].raw += l;
-      if (l <= thk * 1.3) continue; // 牆頭
-      res[key].len += l;
+      if (l < 1) continue;
+      const k1 = Math.round(x0) + ',' + Math.round(y0) + ',' + Math.round(x1) + ',' + Math.round(y1);
+      const k2 = Math.round(x1) + ',' + Math.round(y1) + ',' + Math.round(x0) + ',' + Math.round(y0);
+      if (S.seen.has(k1) || S.seen.has(k2)) continue; // 重複畫的線
+      S.seen.add(k1);
+      S.segs.push([x0, y0, x1, y1, l, Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1)]);
     }
   }
-  for (const k in res) { res[k].len = res[k].len / 2 / 100; res[k].layers = [...res[k].layers]; }
+  for (const k in res) {
+    const thk = res[k].thk, segs = segsOf[k].segs, dMin = thk * 0.7, dMax = thk * 1.3;
+    segs.sort((a, b) => a[5] - b[5]);
+    let tot = 0;
+    for (let ai = 0; ai < segs.length; ai++) {
+      const a = segs[ai], L = a[4];
+      if (L <= thk * 1.3) continue; // 牆頭
+      const ux = (a[2] - a[0]) / L, uy = (a[3] - a[1]) / L, iv = [];
+      for (let ci = 0; ci < segs.length; ci++) {
+        const c = segs[ci];
+        if (c[5] > a[7] + dMax) break;
+        if (ci === ai || c[7] < a[5] - dMax || c[6] > a[8] + dMax || c[8] < a[6] - dMax) continue;
+        const cx = c[2] - c[0], cy = c[3] - c[1];
+        if (Math.abs(ux * cy - uy * cx) / c[4] > 0.03) continue; // 不平行
+        const d = Math.abs((c[0] - a[0]) * uy - (c[1] - a[1]) * ux);
+        if (d < dMin || d > dMax) continue;
+        let t0 = (c[0] - a[0]) * ux + (c[1] - a[1]) * uy, t1 = (c[2] - a[0]) * ux + (c[3] - a[1]) * uy;
+        if (t0 > t1) { const tt = t0; t0 = t1; t1 = tt; }
+        t0 = Math.max(0, t0); t1 = Math.min(L, t1);
+        if (t1 > t0) iv.push([t0, t1]);
+      }
+      iv.sort((x, y) => x[0] - y[0]);
+      let e = -1;
+      for (const [s, t] of iv) { if (t <= e) continue; tot += t - Math.max(s, e); e = t; }
+    }
+    res[k].len = tot / 2 / 100; res[k].layers = [...res[k].layers];
+  }
   return Object.values(res);
 }
 
@@ -2326,7 +2359,7 @@ async function exportXLSX() {
     ['紅磚 塊/m²', `1/2B ${P.brickPerM2[12]}、1B ${P.brickPerM2[24]}`],
     ['白磚 / 輕隔間', `白磚 ${P.blockSize} cm;輕隔間板材 ${P.boardSize} cm × 每面 ${P.boardLayers} 層,立柱間距 ${P.studSpacing} cm`],
     ['損耗率 %', Object.entries(P.loss).map(([k, v]) => ({ concrete: '混凝土', rebar: '鋼筋', brick: '磚', mortar: '砂漿', tile: '磁磚', paint: '油漆', form: '模板' }[k] || k) + ' ' + v).join('、')],
-    ['說明', '牆長 = 牆圖層線長 ÷ 2(去除牆頭);門窗上方/下方的牆面已補回;空間由空間名稱文字自動圍出。數量為估算,請以施工圖核對。']];
+    ['說明', '牆長 = 兩條平行牆線、間距約等於牆厚的重疊長度 ÷ 2(管道間格子、符號、重複線不算);門窗上方/下方的牆面已補回;空間由空間名稱文字自動圍出。數量為估算,請以施工圖核對。']];
   for (const k in TYPE_NAME) { const f = S.finishes[k]; pr.push([TYPE_NAME[k], `地坪 ${f.floor} ${f.floorTile};牆 ${f.wall} ${f.wallTile} 高 ${f.tileH};天花 ${f.ceil}`]); }
   sheets.push({ name: '計算假設', rows: pr, widths: [16, 100] });
   const bytes = QE.buildXLSX(sheets);
