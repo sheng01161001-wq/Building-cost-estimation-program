@@ -737,7 +737,7 @@ function projectTotals() {
     if (!m.has(k)) { m.set(k, { trade: it.trade, item: it.item, unit: it.unit, qty: 0, total: 0, loss: it.loss, note: '' }); order.push(k); }
     const e = m.get(k); e.qty += it.qty * f.rep; e.total += it.total * f.rep;
   }
-  const tradeOrder = ['結構', '泥作', '磁磚', '石材', '油漆', '其他'];
+  const tradeOrder = ['結構', '連續壁', '泥作', '磁磚', '石材', '油漆', '其他'];
   return order.map(k => m.get(k)).sort((a, b) => tradeOrder.indexOf(a.trade) - tradeOrder.indexOf(b.trade));
 }
 function renderProject() {
@@ -783,7 +783,7 @@ async function exportXLSX() {
     er.push([]); er.push([{ v: '外牆數量已改用立面結果(不使用平面周長 × 樓高)', s: 0 }]);
     sheets.push({ name: '立面外牆', rows: er, widths: [16, 14, 12, 14, 14, 60], freeze: 3 });
   }
-  for (const tr of ['結構', '泥作', '磁磚', '油漆']) {
+  for (const tr of ['結構', '連續壁', '泥作', '磁磚', '油漆']) {
     const items = [...new Set(S.project.floors.flatMap(f => f.items.filter(i => i.trade === tr).map(i => i.item + '|' + i.unit)))];
     if (!items.length) continue;
     const head = [H('項目'), H('單位')].concat(S.project.floors.map(f => H(f.name + ' ×' + f.repeat))).concat([H('合計(含層數)'), H('損耗%'), H('含損耗')]);
