@@ -258,7 +258,7 @@ details summary { cursor: pointer; color: var(--accent); font-size: 13px; }
 'use strict';
 const $ = s => document.querySelector(s);
 const S = { kind: 'plan', eroles: {}, zones: [], E: null, EI: null,
-  F: null, fileName: '', roles: {}, unit: 1, box: null, titles: [], activeTitle: null,
+  F: null, fileName: '', roles: {}, unit: 1, box: null, titles: [], activeTitle: null, manualBoxes: {},
   params: QE.defaultParams(), finishes: QE.defaultFinishes(), A: null, Q: null, overrides: {},
   project: { name: '', floors: [], elevs: [] }, view: { cx: 0, cy: 0, s: 1 }, mode: 'pan', showRooms: true, ext: null,
 };
@@ -314,7 +314,7 @@ async function loadDXFBytes(u8, name) {
 }
 
 function setFile(F, name, u) {
-  S.F = F; S.fileName = name; S.box = null; S.A = null; S.Q = null; S.overrides = {};
+  S.F = F; S.fileName = name; S.box = null; S.A = null; S.Q = null; S.overrides = {}; S.manualBoxes = {};
   S.unit = u.unitToCm; S.params.unitToCm = u.unitToCm;
   $('#unitSel').value = String(u.unitToCm); $('#unitWhy').textContent = u.why;
   for (const n of F.layerNames) if (!S.roles[n]) S.roles[n] = QE.guessRole(n);
@@ -329,7 +329,12 @@ function setFile(F, name, u) {
   fit();
   renderLayers(); updateRunBtn(); renderTab();
 }
+function titleKey(t) { return S.kind + '|' + t.title + '|' + Math.round(t.x) + ',' + Math.round(t.y); }
+function applyManualBoxes() { for (const t of S.titles) { const m = S.manualBoxes[titleKey(t)]; if (m) { t.box = m; t.manual = true; } } }
 function computeTitles(F) {
+  computeTitlesAuto(F); applyManualBoxes();
+}
+function computeTitlesAuto(F) {
   if (S.kind === 'elev') {
     const ts = F.texts.filter(t => /立面圖/.test(t.s) && t.s.length <= 20 && !/、|,/.test(t.s));
     const out = [];
@@ -444,7 +449,7 @@ function renderTitles() {
   S.titles.forEach((t, i) => {
     seen[t.title] = (seen[t.title] || 0) + 1;
     const b = document.createElement('button'); b.type = 'button'; b.className = 'chip' + (S.activeTitle === i ? ' on' : '');
-    b.innerHTML = esc(t.title) + (seen[t.title] > 1 ? `<span class="muted"> (${seen[t.title]})</span>` : '') + (t.repeat > 1 ? `<em>×${t.repeat}</em>` : '');
+    b.innerHTML = esc(t.title) + (seen[t.title] > 1 ? `<span class="muted"> (${seen[t.title]})</span>` : '') + (t.repeat > 1 ? `<em>×${t.repeat}</em>` : '') + (t.manual ? '<span class="muted"> ✎</span>' : '');
     b.title = '同名圖面可能出現在不同圖紙(面積圖、配置圖等),點了會跳到該位置';
     b.addEventListener('click', () => { S.activeTitle = i; setBox(t.box); if (S.kind === 'elev') $('#eName').value = t.title.replace(/立面圖/, ''); else { $('#pName').value = t.title.replace(/平面圖/, ''); $('#pRepeat').value = t.repeat; } zoomTo(t.box); renderTitles(); });
     el.appendChild(b);
@@ -997,8 +1002,11 @@ cv.addEventListener('pointerup', e => {
   }
   if (drag.box && Math.abs(drag.x - drag.x0) > 8 && Math.abs(drag.y - drag.y0) > 8) {
     const a = s2w(drag.x0, drag.y0), b = s2w(drag.x, drag.y);
-    S.activeTitle = null; renderTitles();
-    setBox([Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])]);
+    const nb = [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])];
+    const at = S.activeTitle != null ? S.titles[S.activeTitle] : null;
+    if (at) { at.box = nb; at.manual = true; S.manualBoxes[titleKey(at)] = nb; }  // 記住這個圖名的手動範圍,切回來時沿用
+    renderTitles();
+    setBox(nb);
     S.mode = 'pan'; $('#boxBtn').classList.remove('on'); cv.style.cursor = 'grab';
   }
   drag = null; flash = null; draw();
