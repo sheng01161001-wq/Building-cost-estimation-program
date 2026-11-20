@@ -51,7 +51,7 @@ README.md               本說明
 | 7. 數量計算 | `computeQuantities` | 結構、泥作、磁磚、油漆各項數量與損耗 |
 | 8. Excel 產生 | `buildXLSX` | 不用外部函式庫產生 .xlsx(ZIP + XML) |
 | 9. 立面分析 | `analyzeElevation`、`elevationItems`、`guessElevRole` | 外牆輪廓、開口 / 欄杆辨識、材料分區(填充線 + 使用者框選)、外牆材料數量 |
-| 10. 3D 幾何 | `floorGeom`、`alignByColumns`、`shiftGeom`、`findVoids` | 樓層的牆、柱、梁、樓板位置(公尺);靠柱位(沒柱用梁)把各層對齊;沒有空間名稱又畫了對角 X 的封閉區(挑空、電梯井、透空造型框)不做樓板,樓地板面積也扣除。給「3D 施工動畫」用 |
+| 10. 3D 幾何 | `floorGeom`、`alignByColumns`、`shiftGeom`、`findVoids`、`findEquip` | 樓層的牆、柱、梁、樓板位置(公尺);靠柱位(沒柱用梁)把各層對齊;沒有空間名稱又畫了對角 X 的封閉區(挑空、電梯井、透空造型框)不做樓板,樓地板面積也扣除。門窗(門洞、窗中線)、欄杆線、設備圖塊(衛浴、廚具、冷氣、電梯、水塔)位置。給「3D 施工動畫」用 |
 | 其他 | `findPlanTitles`、`planBoxNearTitle`、`floorRepeat`、`detectUnit` | 偵測圖名並自動框選範圍、「九至十二層」→ ×4、判斷圖面單位(mm / cm / m) |
 
 `src/index.html` 負責介面:檔案匯入(DXF、PDF)、圖面檢視(縮放、平移、框選)、圖層對應表、參數輸入、結果分頁(本層數量、空間明細、本案設定、專案總表)、專案檔儲存 / 開啟、Excel 匯出。

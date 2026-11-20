@@ -810,8 +810,42 @@ function analyzeRegion(F, box, layerRoles, params, onProgress) {
   }
   // 開口分配到牆種、房間、外部
   assignOpenings(openings, polys, roleOf, lab, nx, ny, px, box, U, rooms);
+  // 欄杆線、設備(衛浴、廚具、冷氣、電梯…)位置,給 3D 用
+  const railSegs = [];
+  const railSeen = new Set();
+  for (const p of polys) if (roleOf[p.L].role === 'rail') { const q = p.p; for (let i = 0; i + 3 < q.length; i += 2) {
+    if (Math.hypot(q[i + 2] - q[i], q[i + 3] - q[i + 1]) * U < 30) continue;
+    const k1 = [q[i], q[i + 1], q[i + 2], q[i + 3]].map(v => Math.round(v * U / 5)).join(','), k2 = [q[i + 2], q[i + 3], q[i], q[i + 1]].map(v => Math.round(v * U / 5)).join(',');
+    if (railSeen.has(k1) || railSeen.has(k2)) continue; railSeen.add(k1); railSeen.add(k2);
+    railSegs.push([q[i], q[i + 1], q[i + 2], q[i + 3]]); } }
+  const equip = findEquip(F, polys, U);
   if (onProgress) onProgress(1);
-  return { box, px, nx, ny, lab, rooms, footprint, voids, walls, columns, beamLen, beamFromLayer, beamSegs, openings, labelsFound: labels.length };
+  return { box, px, nx, ny, lab, rooms, footprint, voids, railSegs, equip, walls, columns, beamLen, beamFromLayer, beamSegs, openings, labelsFound: labels.length };
+}
+
+/* 設備:設備圖層上的圖塊,取不超過 3 m 的最外層圖塊外框 */
+const EQUIP_KIND = [[/LIFT|電梯|昇降/i, 'lift'], [/冷氣|AC\b|空調/i, 'ac'], [/水塔|水箱/i, 'tank'], [/廚具|Kitchen|洗衣/i, 'kit'], [/衛浴|Toilet|浴缸|馬桶|洗臉/i, 'wc'], [/設備|EQUIP/i, 'eq']];
+function equipKind(name) { for (const [re, k] of EQUIP_KIND) if (re.test(name)) return k; return null; }
+function findEquip(F, polys, U) {
+  const seen = new Map();
+  for (const p of polys) {
+    if (p.ins < 0) continue;
+    const kind = equipKind(F.layerNames[p.L]); if (!kind) continue;
+    // 由內往外找第一個夠大(≥ 25 cm)的圖塊:單一設備(馬桶、洗臉盆、流理台),不要整間浴室的群組
+    let best = -1;
+    for (let a = p.ins; a >= 0; a = F.inserts[a].parent) { const I = F.inserts[a]; if (!I.box) continue; if (Math.max(I.w, I.h) * U >= 25) { best = a; break; } }
+    if (best < 0 || seen.has(best)) continue;
+    const I = F.inserts[best]; if (I.w * U > 300 || I.h * U > 300) continue;
+    seen.set(best, { box: I.box, kind });
+  }
+  // 圖上重複畫的(同位置、同大小)只留一個
+  const out = [];
+  for (const e of seen.values()) {
+    const c = e.box, cx = (c[0][0] + c[2][0]) / 2, cy = (c[0][1] + c[2][1]) / 2, sz = Math.hypot(c[2][0] - c[0][0], c[2][1] - c[0][1]);
+    if (out.some(o => Math.hypot(o.cx - cx, o.cy - cy) * U < 10 && Math.abs(o.sz - sz) * U < 10)) continue;
+    out.push({ box: e.box, kind: e.kind, cx, cy, sz });
+  }
+  return out.map(o => ({ box: o.box, kind: o.kind }));
 }
 
 function findVoids(lab, nx, ny, px, box, polys, U, r) {
@@ -1635,7 +1669,25 @@ function floorGeom(A, params) {
   const loopM = lp => { const o = []; for (const q of lp) o.push(r2(q[0] * U / 100), r2(q[1] * U / 100)); return o; };
   const slab = ((A.footprint && A.footprint.outline) || []).map(loopM);
   const voids = (A.voids || []).map(loopM);
-  return { walls, cols, beams, slab, voids };
+  const m = v => r2(v * U / 100);
+  // 門窗:門用貼牆那一邊(門洞),窗用外框長向的中線
+  const ops = [];
+  for (const o of A.openings || []) {
+    const c = o.box; if (!c) continue;
+    let a, b, t;
+    if (o.kind === 'door' && o.chord) { a = o.chord[0]; b = o.chord[1]; t = 0.15; }
+    else {
+      const e01 = Math.hypot(c[1][0] - c[0][0], c[1][1] - c[0][1]), e12 = Math.hypot(c[2][0] - c[1][0], c[2][1] - c[1][1]);
+      const [p0, p1, p2, p3] = e01 >= e12 ? [c[1], c[2], c[3], c[0]] : [c[0], c[1], c[2], c[3]];
+      a = [(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2]; b = [(p2[0] + p3[0]) / 2, (p2[1] + p3[1]) / 2];
+      t = Math.min(0.3, Math.max(0.1, Math.min(e01, e12) * U / 100));
+    }
+    ops.push([m(a[0]), m(a[1]), m(b[0]), m(b[1]), o.kind === 'door' ? 'd' : 'w', r2(t)]);
+  }
+  const rails = (A.railSegs || []).map(q => [m(q[0]), m(q[1]), m(q[2]), m(q[3])]);
+  const equip = (A.equip || []).map(e => [].concat(...e.box.map(q => [m(q[0]), m(q[1])]), [e.kind]));
+  const oph = [r2((params.doorH || 210) / 100), r2((params.winH || 150) / 100), r2((params.winSill || 90) / 100)];
+  return { walls, cols, beams, slab, voids, ops, rails, equip, oph };
 }
 /* 兩組柱位對齊:找平移量 d 使 B + d ≈ A(柱網投票),回傳 {dx, dy, n 對到幾支} */
 function alignByColumns(A, B, guess, tol) {
@@ -1668,6 +1720,10 @@ function shiftGeom(g, dx, dy) {
     beams: g.beams.map(b => [r2(b[0] + dx), r2(b[1] + dy), r2(b[2] + dx), r2(b[3] + dy), b[4]]),
     slab: g.slab.map(lp => lp.map((v, i) => r2(v + (i % 2 ? dy : dx)))),
     voids: (g.voids || []).map(lp => lp.map((v, i) => r2(v + (i % 2 ? dy : dx)))),
+    ops: (g.ops || []).map(o => [r2(o[0] + dx), r2(o[1] + dy), r2(o[2] + dx), r2(o[3] + dy), o[4], o[5]]),
+    rails: (g.rails || []).map(q => [r2(q[0] + dx), r2(q[1] + dy), r2(q[2] + dx), r2(q[3] + dy)]),
+    equip: (g.equip || []).map(e => e.map((v, i) => i < 8 ? r2(v + (i % 2 ? dy : dx)) : v)),
+    oph: g.oph,
   };
 }
 

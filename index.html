@@ -157,6 +157,8 @@ details summary { cursor: pointer; color: var(--accent); font-size: 13px; }
 .v3d-conc div { display: flex; align-items: baseline; gap: 4px; } .v3d-conc div b.num { display: inline; }
 .v3d-conc > i, .v3d-fl i { display: block; height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin-top: 4px; }
 .v3d-conc > i b, .v3d-fl i b { display: block; height: 100%; width: 0; background: var(--brand-orange); }
+.v3d-layers { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; font-size: 13px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; }
+.v3d-layers label { display: flex; align-items: center; gap: 3px; cursor: pointer; }
 .v3d-leg { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; color: var(--muted); }
 .v3d-leg i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; border: 1px solid rgba(0,0,0,.15); }
 .v3d-floors { display: flex; flex-direction: column; gap: 2px; }
@@ -1096,8 +1098,42 @@ function analyzeRegion(F, box, layerRoles, params, onProgress) {
   }
   // 開口分配到牆種、房間、外部
   assignOpenings(openings, polys, roleOf, lab, nx, ny, px, box, U, rooms);
+  // 欄杆線、設備(衛浴、廚具、冷氣、電梯…)位置,給 3D 用
+  const railSegs = [];
+  const railSeen = new Set();
+  for (const p of polys) if (roleOf[p.L].role === 'rail') { const q = p.p; for (let i = 0; i + 3 < q.length; i += 2) {
+    if (Math.hypot(q[i + 2] - q[i], q[i + 3] - q[i + 1]) * U < 30) continue;
+    const k1 = [q[i], q[i + 1], q[i + 2], q[i + 3]].map(v => Math.round(v * U / 5)).join(','), k2 = [q[i + 2], q[i + 3], q[i], q[i + 1]].map(v => Math.round(v * U / 5)).join(',');
+    if (railSeen.has(k1) || railSeen.has(k2)) continue; railSeen.add(k1); railSeen.add(k2);
+    railSegs.push([q[i], q[i + 1], q[i + 2], q[i + 3]]); } }
+  const equip = findEquip(F, polys, U);
   if (onProgress) onProgress(1);
-  return { box, px, nx, ny, lab, rooms, footprint, voids, walls, columns, beamLen, beamFromLayer, beamSegs, openings, labelsFound: labels.length };
+  return { box, px, nx, ny, lab, rooms, footprint, voids, railSegs, equip, walls, columns, beamLen, beamFromLayer, beamSegs, openings, labelsFound: labels.length };
+}
+
+/* 設備:設備圖層上的圖塊,取不超過 3 m 的最外層圖塊外框 */
+const EQUIP_KIND = [[/LIFT|電梯|昇降/i, 'lift'], [/冷氣|AC\b|空調/i, 'ac'], [/水塔|水箱/i, 'tank'], [/廚具|Kitchen|洗衣/i, 'kit'], [/衛浴|Toilet|浴缸|馬桶|洗臉/i, 'wc'], [/設備|EQUIP/i, 'eq']];
+function equipKind(name) { for (const [re, k] of EQUIP_KIND) if (re.test(name)) return k; return null; }
+function findEquip(F, polys, U) {
+  const seen = new Map();
+  for (const p of polys) {
+    if (p.ins < 0) continue;
+    const kind = equipKind(F.layerNames[p.L]); if (!kind) continue;
+    // 由內往外找第一個夠大(≥ 25 cm)的圖塊:單一設備(馬桶、洗臉盆、流理台),不要整間浴室的群組
+    let best = -1;
+    for (let a = p.ins; a >= 0; a = F.inserts[a].parent) { const I = F.inserts[a]; if (!I.box) continue; if (Math.max(I.w, I.h) * U >= 25) { best = a; break; } }
+    if (best < 0 || seen.has(best)) continue;
+    const I = F.inserts[best]; if (I.w * U > 300 || I.h * U > 300) continue;
+    seen.set(best, { box: I.box, kind });
+  }
+  // 圖上重複畫的(同位置、同大小)只留一個
+  const out = [];
+  for (const e of seen.values()) {
+    const c = e.box, cx = (c[0][0] + c[2][0]) / 2, cy = (c[0][1] + c[2][1]) / 2, sz = Math.hypot(c[2][0] - c[0][0], c[2][1] - c[0][1]);
+    if (out.some(o => Math.hypot(o.cx - cx, o.cy - cy) * U < 10 && Math.abs(o.sz - sz) * U < 10)) continue;
+    out.push({ box: e.box, kind: e.kind, cx, cy, sz });
+  }
+  return out.map(o => ({ box: o.box, kind: o.kind }));
 }
 
 function findVoids(lab, nx, ny, px, box, polys, U, r) {
@@ -1921,7 +1957,25 @@ function floorGeom(A, params) {
   const loopM = lp => { const o = []; for (const q of lp) o.push(r2(q[0] * U / 100), r2(q[1] * U / 100)); return o; };
   const slab = ((A.footprint && A.footprint.outline) || []).map(loopM);
   const voids = (A.voids || []).map(loopM);
-  return { walls, cols, beams, slab, voids };
+  const m = v => r2(v * U / 100);
+  // 門窗:門用貼牆那一邊(門洞),窗用外框長向的中線
+  const ops = [];
+  for (const o of A.openings || []) {
+    const c = o.box; if (!c) continue;
+    let a, b, t;
+    if (o.kind === 'door' && o.chord) { a = o.chord[0]; b = o.chord[1]; t = 0.15; }
+    else {
+      const e01 = Math.hypot(c[1][0] - c[0][0], c[1][1] - c[0][1]), e12 = Math.hypot(c[2][0] - c[1][0], c[2][1] - c[1][1]);
+      const [p0, p1, p2, p3] = e01 >= e12 ? [c[1], c[2], c[3], c[0]] : [c[0], c[1], c[2], c[3]];
+      a = [(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2]; b = [(p2[0] + p3[0]) / 2, (p2[1] + p3[1]) / 2];
+      t = Math.min(0.3, Math.max(0.1, Math.min(e01, e12) * U / 100));
+    }
+    ops.push([m(a[0]), m(a[1]), m(b[0]), m(b[1]), o.kind === 'door' ? 'd' : 'w', r2(t)]);
+  }
+  const rails = (A.railSegs || []).map(q => [m(q[0]), m(q[1]), m(q[2]), m(q[3])]);
+  const equip = (A.equip || []).map(e => [].concat(...e.box.map(q => [m(q[0]), m(q[1])]), [e.kind]));
+  const oph = [r2((params.doorH || 210) / 100), r2((params.winH || 150) / 100), r2((params.winSill || 90) / 100)];
+  return { walls, cols, beams, slab, voids, ops, rails, equip, oph };
 }
 /* 兩組柱位對齊:找平移量 d 使 B + d ≈ A(柱網投票),回傳 {dx, dy, n 對到幾支} */
 function alignByColumns(A, B, guess, tol) {
@@ -1954,6 +2008,10 @@ function shiftGeom(g, dx, dy) {
     beams: g.beams.map(b => [r2(b[0] + dx), r2(b[1] + dy), r2(b[2] + dx), r2(b[3] + dy), b[4]]),
     slab: g.slab.map(lp => lp.map((v, i) => r2(v + (i % 2 ? dy : dx)))),
     voids: (g.voids || []).map(lp => lp.map((v, i) => r2(v + (i % 2 ? dy : dx)))),
+    ops: (g.ops || []).map(o => [r2(o[0] + dx), r2(o[1] + dy), r2(o[2] + dx), r2(o[3] + dy), o[4], o[5]]),
+    rails: (g.rails || []).map(q => [r2(q[0] + dx), r2(q[1] + dy), r2(q[2] + dx), r2(q[3] + dy)]),
+    equip: (g.equip || []).map(e => e.map((v, i) => i < 8 ? r2(v + (i % 2 ? dy : dx)) : v)),
+    oph: g.oph,
   };
 }
 
@@ -2790,7 +2848,8 @@ function demoDXF() {
 }
 
 /* ---------------- 3D 施工動畫 ---------------- */
-const V3 = { open: false };
+const V3 = { open: false, layers: { struct: true, wall: true, open: true, rail: true, equip: true } };
+const V3_LAYERS = [['struct', '結構(柱梁板)'], ['wall', '牆'], ['open', '門窗'], ['rail', '欄杆'], ['equip', '設備']];
 const V3_STAGES = [['beam', '梁'], ['slab', '樓板'], ['col', '柱'], ['wall', '牆']];
 const V3_COLOR = { col: '#5b6b7d', rc: '#b9bcb6', brick: '#c27a52', block: '#d9cfb8', light: '#e6e2d6', beam: '#8a9099', slab: '#cfd3cf' };
 const V3_CONC = { beam: /^混凝土 — 梁$/, slab: /^混凝土 — 樓板$/, col: /^混凝土 — 柱$/, wall: /^混凝土 — RC牆$|連續壁.*混凝土/ };
@@ -2880,6 +2939,7 @@ function v3Geo(THREE, boxes) {
     for (let i = 0; i < 4; i++) { const j = (i + 1) % 4; quad(lo[i], lo[j], hi[j], hi[i]); }
   };
   for (const b of boxes) {
+    if (b.k) { box(b.k, b.z0, b.z1); continue; }
     if (b.c) { const [cx, cy, w, h] = b.c; box([[cx - w / 2, cy - h / 2], [cx + w / 2, cy - h / 2], [cx + w / 2, cy + h / 2], [cx - w / 2, cy + h / 2]], b.z0, b.z1); continue; }
     const [ax, ay, bx, by, w, z0, z1] = b; const L = Math.hypot(bx - ax, by - ay); if (L < 0.01) continue;
     const nx = -(by - ay) / L * w / 2, ny = (bx - ax) / L * w / 2;
@@ -2939,7 +2999,8 @@ function v3Build(plan, ov) {
     <button class="btn small" id="v3Close" type="button">關閉</button></div>
     <div class="v3d-main"><div class="v3d-cv"><canvas id="v3Cv"></canvas><div class="v3d-views" role="group" aria-label="視角"><button type="button" data-view="fit" title="回到看得到整棟的斜角">看整棟</button><button type="button" data-view="front" title="從平面圖下方那一面看">前</button><button type="button" data-view="back" title="從平面圖上方那一面看">後</button><button type="button" data-view="left" title="從平面圖左邊看">左</button><button type="button" data-view="right" title="從平面圖右邊看">右</button><button type="button" data-view="top" title="從正上方往下看">上</button></div><div class="v3d-hint small">拖曳旋轉 · 右鍵或 Shift 拖曳平移 · 滾輪在游標處縮放 · 點兩下拉近該處</div></div>
     <aside class="v3d-side"><div class="v3d-now" id="v3Now"></div><div class="v3d-conc" id="v3Conc"></div>
-    <div class="v3d-leg">${[['col', '柱'], ['rc', 'RC 牆'], ['brick', '磚牆'], ['block', '白磚/輕隔間'], ['beam', '梁'], ['slab', '樓板']].map(([k, n]) => `<span><i style="background:${V3_COLOR[k]}"></i>${n}</span>`).join('')}<span><i style="background:var(--brand-orange)"></i>施工中</span></div>
+    <div class="v3d-layers" role="group" aria-label="顯示哪些東西"><span class="small muted">顯示</span>${V3_LAYERS.map(([k, n]) => `<label><input type="checkbox" data-layer="${k}" ${V3.layers[k] ? 'checked' : ''}> ${n}</label>`).join('')}</div>
+    <div class="v3d-leg">${[['col', '柱'], ['rc', 'RC 牆'], ['brick', '磚牆'], ['block', '白磚/輕隔間'], ['beam', '梁'], ['slab', '樓板']].map(([k, n]) => `<span><i style="background:${V3_COLOR[k]}"></i>${n}</span>`).join('')}<span><i style="background:#7fb0d6"></i>窗/玻璃欄杆</span><span><i style="background:#8a5a3c"></i>門</span><span><i style="background:#f4f4f2"></i>設備</span><span><i style="background:var(--brand-orange)"></i>施工中</span></div>
     <div class="v3d-floors" id="v3Floors"></div></aside></div>
     <div class="v3d-bar"><button class="btn small primary" id="v3Play" type="button">▶ 播放</button>
     <input type="range" id="v3T" min="0" step="0.01" value="0" aria-label="施工進度"><span class="num small" id="v3Lbl"></span>
@@ -2965,6 +3026,10 @@ function v3Build(plan, ov) {
   scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8478, 1.6));
   const sun = new THREE.DirectionalLight(0xffffff, 1.6); sun.position.set(0.6, 1, 0.35); scene.add(sun);
   const M = {}; for (const k in V3_COLOR) M[k] = new THREE.MeshLambertMaterial({ color: V3_COLOR[k], side: THREE.DoubleSide });
+  M.glass = new THREE.MeshLambertMaterial({ color: '#7fb0d6', transparent: true, opacity: 0.45, depthWrite: false, side: THREE.DoubleSide });
+  M.rail = new THREE.MeshLambertMaterial({ color: '#8fc0d4', transparent: true, opacity: 0.4, depthWrite: false, side: THREE.DoubleSide });
+  M.door = new THREE.MeshLambertMaterial({ color: '#8a5a3c', side: THREE.DoubleSide });
+  for (const [k, c] of [['wc', '#f4f4f2'], ['kit', '#d8cfc0'], ['ac', '#e9ecef'], ['lift', '#7d8a96'], ['tank', '#4f86b8'], ['eq', '#c9c3b6']]) M['eq_' + k] = new THREE.MeshLambertMaterial({ color: c, side: THREE.DoubleSide });
   const ghostM = new THREE.MeshBasicMaterial({ color: '#7f8c99', transparent: true, opacity: 0.07, depthWrite: false, side: THREE.DoubleSide });
   const hotM = new THREE.MeshLambertMaterial({ color: '#f0a55e', side: THREE.DoubleSide });
   const edgeM = new THREE.LineBasicMaterial({ color: '#2d3640', transparent: true, opacity: 0.28 });
@@ -2975,23 +3040,40 @@ function v3Build(plan, ov) {
     const z = L.z, g = L.g;
     const nextT = plan.levels[li + 1] ? plan.levels[li + 1].T : 0;
     const parts = {};
-    if (g.beams.length) parts.beam = [{ geo: v3Geo(THREE, g.beams.map(b => [b[0], b[1], b[2], b[3], b[4], 0, bD])), mat: M.beam, y: z - bD }];
+    if (g.beams.length) parts.beam = [{ geo: v3Geo(THREE, g.beams.map(b => [b[0], b[1], b[2], b[3], b[4], 0, bD - 0.02])), mat: M.beam, y: z - bD }];
     if (g.slab.length) parts.slab = [{ geo: v3SlabGeo(THREE, g.slab, L.T, g.voids), mat: M.slab, y: z - L.T }];
     const hw = Math.max(0.3, L.H - nextT);
     if (g.cols.length) parts.col = [{ geo: v3Geo(THREE, g.cols.map(c => ({ c, z0: 0, z1: hw }))), mat: M.col, y: z }];
     if (g.walls.length) {
       const byK = {}; for (const w of g.walls) (byK[w[5]] = byK[w[5]] || []).push(w);
-      parts.wall = Object.keys(byK).map(k => ({ geo: v3Geo(THREE, byK[k].map(w => [w[0], w[1], w[2], w[3], w[4], 0, hw])), mat: M[k] || M.rc, y: z }));
+      parts.wall = Object.keys(byK).map(k => ({ geo: v3Geo(THREE, byK[k].map(w => [w[0], w[1], w[2], w[3], w[4], 0, hw])), mat: M[k] || M.rc, y: z, layer: 'wall' }));
     }
+    // 門窗、窗台與門窗上方的牆、欄杆、設備:跟牆同一步出現
+    const [dH, wH, wS] = g.oph || [2.1, 1.5, 0.9], fill = [], glass = [], door = [];
+    for (const o of g.ops || []) {
+      const seg = [o[0], o[1], o[2], o[3]];
+      if (o[4] === 'd') { door.push(seg.concat([0.05, 0, Math.min(dH, hw)])); if (hw > dH + 0.05) fill.push(seg.concat([o[5], dH, hw])); }
+      else { const top = Math.min(hw, wS + wH); glass.push(seg.concat([0.04, wS, top])); fill.push(seg.concat([o[5], 0, wS])); if (hw > top + 0.05) fill.push(seg.concat([o[5], top, hw])); }
+    }
+    const extra = [];
+    if (fill.length) extra.push({ geo: v3Geo(THREE, fill), mat: M.rc, y: z, layer: 'wall' });
+    if (glass.length) extra.push({ geo: v3Geo(THREE, glass), mat: M.glass, y: z, layer: 'open', noEdge: true });
+    if (door.length) extra.push({ geo: v3Geo(THREE, door), mat: M.door, y: z, layer: 'open' });
+    if ((g.rails || []).length) extra.push({ geo: v3Geo(THREE, g.rails.map(q => q.concat([0.04, 0, 1.1]))), mat: M.rail, y: z, layer: 'rail', noEdge: true });
+    const EH = { wc: 0.8, kit: 0.9, ac: 0.7, lift: 2.2, tank: 1.8, eq: 1 }, byE = {};
+    for (const e of g.equip || []) (byE[e[8]] = byE[e[8]] || []).push({ k: [[e[0], e[1]], [e[2], e[3]], [e[4], e[5]], [e[6], e[7]]], z0: 0, z1: Math.min(hw, EH[e[8]] || 1) });
+    for (const k in byE) extra.push({ geo: v3Geo(THREE, byE[k]), mat: M['eq_' + k] || M.eq_eq, y: z, layer: 'equip' });
+    if (extra.length) parts.wall = (parts.wall || []).concat(extra);
     for (const [key, label] of V3_STAGES) {
       const ps = (parts[key] || []).filter(p => p.geo); if (!ps.length) continue;
       const conc = L.f.items.filter(i => V3_CONC[key].test(i.item)).reduce((s, i) => s + i.qty, 0);
       const st = { li, key, label, name: L.name, conc, meshes: [] }; steps.push(st);
       for (const p of ps) {
         const grp = new THREE.Group(); grp.position.y = p.y;
-        const mesh = new THREE.Mesh(p.geo, p.mat); const ed = new THREE.LineSegments(new THREE.EdgesGeometry(p.geo, 30), edgeM);
-        grp.add(mesh); grp.add(ed); scene.add(grp);
-        st.meshes.push({ grp, mesh, ed, mat: p.mat });
+        const mesh = new THREE.Mesh(p.geo, p.mat); grp.add(mesh);
+        const ed = p.noEdge ? null : new THREE.LineSegments(new THREE.EdgesGeometry(p.geo, 30), edgeM); if (ed) grp.add(ed);
+        scene.add(grp);
+        st.meshes.push({ grp, mesh, ed, mat: p.mat, layer: p.layer || 'struct' });
       }
     }
     zMin = Math.min(zMin, z - 1); zMax = Math.max(zMax, z + L.H);
@@ -3096,9 +3178,10 @@ function v3Build(plan, ov) {
     steps.forEach((st, i) => {
       const k = t - i;
       for (const m of st.meshes) {
-        if (k >= 1) { m.grp.visible = true; m.mesh.material = m.mat; m.ed.visible = true; m.grp.scale.y = 1; }
-        else if (k > 0) { m.grp.visible = true; m.mesh.material = hotM; m.ed.visible = false; m.grp.scale.y = Math.max(0.001, ease(k)); }
-        else { m.grp.visible = ghost; m.mesh.material = ghostM; m.ed.visible = false; m.grp.scale.y = 1; }
+        if (!V3.layers[m.layer]) { m.grp.visible = false; continue; }
+        if (k >= 1) { m.grp.visible = true; m.mesh.material = m.mat; if (m.ed) m.ed.visible = true; m.grp.scale.y = 1; }
+        else if (k > 0) { m.grp.visible = true; m.mesh.material = hotM; if (m.ed) m.ed.visible = false; m.grp.scale.y = Math.max(0.001, ease(k)); }
+        else { m.grp.visible = ghost; m.mesh.material = ghostM; if (m.ed) m.ed.visible = false; m.grp.scale.y = 1; }
       }
       done += st.conc * Math.min(1, Math.max(0, k));
     });
@@ -3113,6 +3196,7 @@ function v3Build(plan, ov) {
   rng.addEventListener('input', () => { V3.t = parseFloat(rng.value); V3.play = false; });
   $('#v3Play').addEventListener('click', () => { if (V3.t >= N) V3.t = 0; V3.play = !V3.play; lastSync = -1; });
   $('#v3Ghost').addEventListener('change', () => { lastSync = -1; });
+  ov.querySelectorAll('[data-layer]').forEach(c => c.addEventListener('change', () => { V3.layers[c.dataset.layer] = c.checked; lastSync = -1; }));
   const onKey = e => { if (e.key === 'Escape') close(); else if (e.key === ' ' && !/BUTTON|INPUT|SELECT/.test(e.target.tagName)) { e.preventDefault(); $('#v3Play').click(); } };
   const close = () => {
     V3.open = false; cancelAnimationFrame(V3.raf); ro.disconnect(); document.removeEventListener('keydown', onKey);
