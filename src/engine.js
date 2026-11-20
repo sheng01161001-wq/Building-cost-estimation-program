@@ -1727,6 +1727,198 @@ function shiftGeom(g, dx, dy) {
   };
 }
 
-const api = { EROLES, guessElevRole, materialName, analyzeElevation, elevationItems, findPlanTitles, planBoxNearTitle, floorRepeat, detectUnit, mergedType, parseDXF, flattenDXF, guessRole, ROLES, ROOM_TYPES, roomTypeOf, isRoomLabel, defaultFinishes, defaultParams, analyzeRegion, computeQuantities, buildXLSX, decodeBytes, cleanMText, tileArea, floorGeom, alignByColumns, shiftGeom };
+/* ------------------------------------------------------------------ */
+/* 11. 整棟自動估算:建築平立剖面圖(＋結構平面圖)→ 每層數量＋3D 位置       */
+/* ------------------------------------------------------------------ */
+// 樓層名稱/代號 → 由下往上的順序:地下 -n、一般 n、夾層 n+0.5、屋突 1000+n、屋頂 2000
+function levelOf(s) {
+  s = String(s || '').replace(/\s/g, '');
+  let m = /\(([^)]*)\)/.exec(s); const code = m ? m[1] : '';
+  const N = v => (/^\d+$/.test(v) ? +v : cnNum(v));
+  if ((m = /^B(\d+)F?$/i.exec(code))) return -N(m[1]);
+  if ((m = /^R(\d+)F?$/i.exec(code))) return 1000 + N(m[1]);
+  if (/^(PF|RF)$/i.test(code)) return 2000;
+  if ((m = /^(\d+)MF$/i.exec(code))) return N(m[1]) + 0.5;
+  if ((m = /^(\d+)F/i.exec(code))) return N(m[1]);
+  if (/屋突|屋頂突出/.test(s)) { m = /(?:屋突|屋頂突出物?)([\d一二三四五六七八九十]+)/.exec(s); return 1000 + (m ? N(m[1]) : 1); }
+  if (/屋頂/.test(s)) return 2000;
+  if ((m = /地下([\d一二三四五六七八九十]+)/.exec(s))) return -N(m[1]);
+  if ((m = /([\d一二三四五六七八九十]+)(?:層)?夾層/.exec(s))) return N(m[1]) + 0.5;
+  if ((m = /([\d一二三四五六七八九十]+)\s*(?:[至~\-到][\d一二三四五六七八九十]+)?\s*[層樓F]/.exec(s))) return N(m[1]);
+  return NaN;
+}
+function levelCode(lv, rep) {
+  if (lv <= -1) return 'B' + (-lv);
+  if (lv >= 2000) return 'PF';
+  if (lv >= 1000) return 'R' + (lv - 1000) + 'F';
+  if (lv % 1) return Math.floor(lv) + 'MF';
+  return rep > 1 ? lv + '~' + (lv + rep - 1) + 'F' : lv + 'F';
+}
+// 剖面圖高程「2FL+665」「B3FL+-1555」「R1FL+4185」→ { 順序: 高程 cm }
+function sectionLevels(F) {
+  const out = {};
+  for (const t of F.texts) {
+    const m = /^(B?\d+|R\d*|P|M?\d+M)F?L\s*\+?\s*(-?)\s*\+?\s*(-?\d+(?:\.\d+)?)/i.exec(String(t.s).replace(/\s/g, ''));
+    if (!m) continue;
+    const c = m[1].toUpperCase(); let lv;
+    if (/^B\d+$/.test(c)) lv = -(+c.slice(1)); else if (/^R\d+$/.test(c)) lv = 1000 + (+c.slice(1)); else if (c === 'R' || c === 'P') lv = 2000; else if (/^\d+M$/.test(c)) lv = +c.slice(0, -1) + 0.5; else lv = +c;
+    const v = (m[2] === '-' ? -1 : 1) * parseFloat(m[3]);
+    if (out[lv] === undefined) out[lv] = v;
+  }
+  return out;
+}
+// 結構圖用的圖層角色:只留柱、梁、RC 牆,建築圖層(A- 開頭)不算;牆厚照名稱
+function structRoles(F) {
+  const r = {};
+  for (const n of F.layerNames) {
+    const g = guessRole(n);
+    if (/^A[-_ ]|^(WALL|window|door)/i.test(n) || !['column', 'beam', 'wall_rc'].includes(g.role)) { r[n] = { role: 'ignore' }; continue; }
+    if (g.role !== 'wall_rc') { r[n] = g; continue; }
+    const num = /(\d+(?:\.\d+)?)\s*(?:cm|CM|公分)/.exec(n);
+    r[n] = { role: 'wall_rc', thk: num ? +num[1] : /地下室外牆|連續壁/.test(n) ? 70 : /擋土牆/.test(n) ? 30 : 25 };
+  }
+  return r;
+}
+function structTitles(F) {
+  const ts = F.texts.filter(t => /結構平面圖/.test(t.s) && t.s.length <= 24);
+  const maxH = ts.reduce((m, t) => Math.max(m, t.h || 0), 0);
+  return ts.filter(t => (t.h || 0) >= maxH * 0.6).map(t => ({ title: t.s, x: t.x, y: t.y, h: t.h, lv: levelOf(t.s), repeat: floorRepeat(t.s.replace(/F/g, '層')) }));
+}
+// 第一步:列出整棟樓層(使用者可以在表上改樓高、版厚、層數)
+function planBuilding(FA, FS, roles) {
+  const at = findPlanTitles(FA).map(t => Object.assign(t, { lv: levelOf(t.title) })).filter(t => !isNaN(t.lv));
+  const st = FS ? structTitles(FS).filter(t => !isNaN(t.lv)) : [];
+  const rS = FS ? structRoles(FS) : null;
+  const lvs = [...new Set(at.map(t => t.lv).concat(st.map(t => t.lv)))].sort((a, b) => a - b);
+  const sec = sectionLevels(FA);
+  const floors = [];
+  for (const lv of lvs) {
+    const a = at.find(t => t.lv === lv);
+    // 同一層有好幾張結構圖(例如重複的一層):取範圍裡柱子最多的那張
+    const cands = st.filter(t => t.lv === lv);
+    let s = null;
+    if (cands.length === 1) s = cands[0];
+    else if (cands.length > 1) {
+      let best = -1;
+      for (const c of cands) { const b = planBoxNearTitle(FS, c, rS, { members: ['beam', 'column', 'wall_rc'], gap: 5, wy: 60, wx: 40 }); if (!b) continue; let n = 0; for (const p of FS.polys) if (rS[FS.layerNames[p.L]].role === 'column' && p.bb[0] >= b[0] && p.bb[2] <= b[2] && p.bb[1] >= b[1] && p.bb[3] <= b[3]) n++; if (n > best) { best = n; s = c; } }
+    }
+    const repeat = a ? a.repeat : s ? s.repeat : 1;
+    floors.push({ lv, name: levelCode(lv, repeat), repeat, plan: a ? a.title : '', struct: s ? s.title : '', _a: a || null, _s: s || null, floorH: 0, slabT: 15, hNote: '' });
+  }
+  // 樓高:剖面高程相減;夾層、沒標高程的平均分;最上面屋頂層只有樓板
+  const known = floors.map(f => sec[f.lv]);
+  const top = (i, f) => { // 本層到上一層的高程差
+    for (let j = i + 1; j < floors.length; j++) if (known[j] !== undefined) {
+      if (known[i] === undefined) return null;
+      // 中間有幾層沒高程(含重複層)就平均分
+      let cnt = 0; for (let k = i; k < j; k++) cnt += floors[k].repeat;
+      return (known[j] - known[i]) / cnt;
+    }
+    return null;
+  };
+  floors.forEach((f, i) => {
+    let h = top(i, f);
+    // 重複樓層(九至十二層)後面沒有樓層有高程時,用下一層的高程
+    if (h == null && known[i] !== undefined && sec[f.lv + 1] !== undefined) h = sec[f.lv + 1] - known[i];
+    if (h == null && known[i] === undefined) {
+      // 往下找有高程的,平均分到下一個有高程的
+      let lo = -1; for (let k = i - 1; k >= 0; k--) if (known[k] !== undefined) { lo = k; break; }
+      if (lo >= 0) { const hh = top(lo, floors[lo]); if (hh != null) h = hh; }
+    }
+    if (f.lv >= 2000 && i === floors.length - 1) { f.floorH = f.slabT; f.hNote = '屋頂層只有樓板'; return; }
+    if (h != null && h > 150 && h < 1200) { f.floorH = Math.round(h); f.hNote = '剖面高程'; }
+    else { f.floorH = f.lv >= 1000 ? 300 : 320; f.hNote = '預設(剖面沒抓到高程)'; }
+  });
+  if (floors.length && floors[0].lv < 0) { floors[0].slabT = 45; floors[0].hNote += ';最底層當基礎版 45 cm,請照樓板尺寸表確認'; }
+  return { floors, sec, structRoles: rS, planTitles: at.length, structTitles: st.length };
+}
+// 第二步:一層一層算(ctx 會記住上一層的範圍大小,給圈太小的樓層用)
+// unitS:結構圖的單位(公分換算),沒給就跟建築圖一樣
+function newBuildingCtx(FA, FS, roles, rS, unitS) { return { FA, FS, roles, rS, unitS, lastA: null, lastS: null }; }
+function tryBoundary(ctx, F, box, roles, P, A0) {
+  const open = A0.rooms.filter(r => r.status === 'open'); if (!open.length) return null;
+  const okN = A => A.rooms.filter(r => r.status === 'ok').length;
+  const U = P.unitToCm, near = 300 / U;
+  // 候選:沒有角色、離沒圍起來的空間名稱 3 m 內有線的圖層(上一層成功過的先試)
+  const cnt = {};
+  for (const p of F.polys) {
+    const n = F.layerNames[p.L], ro = roles[n];
+    if (ro && ro.role !== 'ignore') continue;
+    if (/文字|TEXT|DIM|標註|尺寸|座標|Grid|家具|Furniture|衛浴|Toilet|廚具|Kitchen|HATCH|填充|Frame|圖框|Defpoints/i.test(n)) continue;
+    if (p.bb[2] < box[0] || p.bb[0] > box[2] || p.bb[3] < box[1] || p.bb[1] > box[3]) continue;
+    for (const r of open) if (p.bb[0] - near < r.x && p.bb[2] + near > r.x && p.bb[1] - near < r.y && p.bb[3] + near > r.y) { cnt[n] = (cnt[n] || 0) + 1; break; }
+  }
+  let cands = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a]).slice(0, 2);
+  if (ctx.boundLayer && cnt[ctx.boundLayer]) cands = [ctx.boundLayer].concat(cands.filter(c => c !== ctx.boundLayer)).slice(0, 2);
+  for (const L of cands) {
+    const R = Object.assign({}, roles, { [L]: { role: 'boundary' } });
+    const A = analyzeRegion(F, box, R, P);
+    const a0 = A0.footprint.area, a1 = A.footprint.area;
+    if (okN(A) > okN(A0) && a1 >= a0 * 0.98 && a1 <= a0 * 1.1) { ctx.boundLayer = L; return { A, layer: L }; }
+  }
+  return null;
+}
+function runBuildingFloor(ctx, f, baseParams, finishes) {
+  const { FA, FS, roles, rS } = ctx;
+  const P = Object.assign(defaultParams(), baseParams || {}, { floorH: f.floorH, slabT: f.slabT, repeat: f.repeat });
+  const notes = [], infos = []; // notes:要留意(樓層名加 ⚠);infos:只是告知
+  const bA = b => (b[2] - b[0]) * (b[3] - b[1]);
+  const boxFor = (F, t, R, key, opt) => {
+    let b = planBoxNearTitle(F, t, R, opt);
+    const last = ctx[key];
+    // 範圍圈太小(只圈到一角):照上一層的範圍大小、相對圖名位置去圈
+    if (!b && !last) return null;
+    if (last && (!b || bA(b) < 0.3 * last.a)) { b = [t.x + last.r[0], t.y + last.r[1], t.x + last.r[2], t.y + last.r[3]]; notes.push((key === 'lastS' ? '結構圖' : '平面圖') + '範圍太小,照上一層範圍'); }
+    else ctx[key] = { a: bA(b), r: [b[0] - t.x, b[1] - t.y, b[2] - t.x, b[3] - t.y] };
+    return b;
+  };
+  let SA = null, A = null, gS = null, geom;
+  if (f._s && FS) { const sb = boxFor(FS, f._s, rS, 'lastS', { members: ['beam', 'column', 'wall_rc'], gap: 5, wy: 60, wx: 40 }); if (sb) { const PS = ctx.unitS ? Object.assign({}, P, { unitToCm: ctx.unitS }) : P; SA = analyzeRegion(FS, sb, rS, PS); gS = floorGeom(SA, PS); } }
+  const ab = f._a ? boxFor(FA, f._a, roles, 'lastA') : null;
+  if (ab) {
+    let a = analyzeRegion(FA, ab, roles, P);
+    const wl = a.walls.reduce((s, w) => s + w.len, 0), swl = SA ? SA.walls.reduce((s, w) => s + w.len, 0) + SA.beamLen * 0.3 : 0;
+    // 平面圖的牆幾乎抓不到,或圍出來的面積不到結構圖一半(地下室畫在別的圖層、屋頂層只有排水線):改只用結構圖
+    const okRooms = a.rooms.filter(r => r.status === 'ok').length;
+    if (SA && (wl < Math.max(5, swl * 0.2) || (a.footprint.area < SA.footprint.area * 0.5 && okRooms < 3))) notes.push('平面圖的牆不在牆圖層,只算結構(樓板用結構圖外圍)');
+    else {
+      // 陽台、露台沒圍起來:試著把附近的線條圖層當邊界線,圍得起來、面積合理才用
+      if (a.rooms.some(r => r.status === 'open')) { const t = tryBoundary(ctx, FA, ab, roles, P, a); if (t) { a = t.A; infos.push('自動把圖層「' + t.layer + '」當陽台邊界線'); } }
+      A = a;
+    }
+  }
+  if (A && SA) {
+    const gA = floorGeom(A, P), al = alignByColumns(gA.cols, gS.cols);
+    const g2 = al && al.n >= 3 ? shiftGeom(gS, al.dx, al.dy) : null;
+    const area = g => g.slab.reduce((t, lp) => { let s = 0; for (let i = 0; i < lp.length; i += 2) { const j = (i + 2) % lp.length; s += lp[i] * lp[j + 1] - lp[j] * lp[i + 1]; } return t + Math.abs(s) / 2; }, 0);
+    const useS = g2 && area(g2) > area(gA) * 1.15;
+    geom = Object.assign({}, gA, { slab: useS ? g2.slab : gA.slab, cols: g2 ? g2.cols : gA.cols, beams: g2 ? g2.beams : [] });
+    if (!g2) notes.push('結構圖柱位對不上平面圖,3D 柱梁改用平面圖柱');
+    // 數量:柱、梁用結構圖
+    A.beamLen = SA.beamLen; A.beamFromLayer = SA.beamFromLayer; A.columns = SA.columns;
+  } else if (A) { geom = floorGeom(A, P); notes.push(FS ? '沒有對應的結構平面圖,梁用估算' : '沒有結構圖,梁用估算'); }
+  else if (SA) { A = SA; geom = gS; }
+  else return null;
+  const bad = (A.rooms || []).filter(r => r.status !== 'ok').map(r => r.name);
+  if (bad.length && A !== SA) notes.push('沒圍成(不計裝修):' + bad.join('、'));
+  // 連續壁(地下室外牆 ≥ 60 cm)另外列:從 RC 牆拿掉,牆面積=牆長×樓高、混凝土=面積×厚度(不含模板)
+  const dw = (A.walls || []).filter(w => w.role === 'wall_rc' && w.thk >= 60 && f.lv < 0);
+  if (dw.length) A = Object.assign({}, A, { walls: A.walls.filter(w => !dw.includes(w)) });
+  const Q = computeQuantities(A, P, finishes || defaultFinishes(), {});
+  for (const w of dw) {
+    const area = w.len * P.floorH / 100, lc = P.loss.concrete, t = w.thk / 100;
+    Q.items.push({ trade: '連續壁', item: `連續壁 ${w.thk}cm — 牆面積`, unit: 'm²', qty: area, loss: 0, total: area, note: `牆長 ${w.len.toFixed(1)} m × 樓高 ${P.floorH} cm` });
+    Q.items.push({ trade: '連續壁', item: `連續壁 ${w.thk}cm — 混凝土`, unit: 'm³', qty: area * t, loss: lc, total: area * t * (1 + lc / 100), note: `面積 × ${t} m` });
+  }
+  return {
+    name: f.name + (notes.length ? ' ⚠' : ''), repeat: f.repeat, file: [f.plan, f.struct].filter(Boolean).join(' ＋ '), floorArea: A.footprint.area,
+    params: { floorH: P.floorH, slabT: P.slabT, ceilH: P.ceilH },
+    items: Q.items.map(it => ({ trade: it.trade, item: it.item, unit: it.unit, qty: it.qty, loss: it.loss, total: it.total })),
+    rooms: (Q.roomDetail || []).map(r => ({ name: r.name, type: r.type, area: r.area, perim: r.perim, floor: r.floor, wallTile: r.wallTile, wallPaint: r.wallPaint, ceilPaint: r.ceilPaint })),
+    geom, note: notes.concat(infos).join(';'), warn: notes.length > 0,
+  };
+}
+
+const api = { EROLES, guessElevRole, materialName, analyzeElevation, elevationItems, findPlanTitles, planBoxNearTitle, floorRepeat, detectUnit, mergedType, parseDXF, flattenDXF, guessRole, ROLES, ROOM_TYPES, roomTypeOf, isRoomLabel, defaultFinishes, defaultParams, analyzeRegion, computeQuantities, buildXLSX, decodeBytes, cleanMText, tileArea, floorGeom, alignByColumns, shiftGeom, levelOf, levelCode, sectionLevels, structRoles, planBuilding, newBuildingCtx, runBuildingFloor };
 if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.QE = api;
 })(typeof window !== 'undefined' ? window : globalThis);

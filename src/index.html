@@ -135,6 +135,20 @@ table.q td.memo { color: var(--muted); font-size: 12px; }
 .small { font-size: 12.5px; }
 details summary { cursor: pointer; color: var(--accent); font-size: 13px; }
 .finish select, .finish input { width: 100%; }
+.ab-ov { position: fixed; inset: 0; z-index: 900; background: rgba(20,24,29,.45); display: flex; align-items: flex-start; justify-content: center; padding: 24px 12px; overflow: auto; }
+.ab-box { background: var(--sheet); color: var(--ink); border-radius: 10px; padding: 18px 20px; width: min(980px, 100%); box-shadow: 0 10px 40px rgba(0,0,0,.25); }
+.ab-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.ab-head h2 { font-size: 18px; }
+.ab-files { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0; }
+.ab-drop { display: flex; flex-direction: column; gap: 3px; border: 2px dashed var(--line); border-radius: 8px; padding: 12px; cursor: pointer; }
+.ab-drop:hover, .ab-drop.hover { border-color: var(--accent); background: var(--accent-soft); }
+.ab-name { font-family: var(--font-num); font-size: 12px; color: var(--accent); word-break: break-all; }
+.ab-msg { margin: 8px 0; font-size: 13px; }
+.ab-msg.bad, .ab-msg .bad { color: var(--bad); }
+.ab-t input[type=number] { text-align: right; }
+.ab-help { margin-top: 10px; font-size: 13px; }
+.ab-doc h3 { font-size: 15px; margin: 14px 0 4px; } .ab-doc ol, .ab-doc ul { margin: 4px 0; padding-left: 22px; } .ab-doc li { margin: 2px 0; }
+@media (max-width: 720px) { .ab-files { grid-template-columns: 1fr; } }
 .v3d { position: fixed; inset: 0; z-index: 1000; background: var(--paper); display: flex; flex-direction: column; }
 .v3d-top, .v3d-bar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: var(--sheet); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 .v3d-bar { border-bottom: 0; border-top: 1px solid var(--line); }
@@ -178,8 +192,10 @@ details summary { cursor: pointer; color: var(--accent); font-size: 13px; }
   <div class="proj"><label for="projName" class="muted small">案名</label><input type="text" id="projName" placeholder="例:CN25010 集合住宅">
     <button class="btn small" id="saveProj" type="button" title="把本案的樓層、立面、圖層對應與所有設定存成一個檔,可傳給同事">儲存專案檔</button>
     <label class="btn small" for="openProj" title="開啟之前儲存的專案檔">開啟專案檔</label><input type="file" id="openProj" accept=".json" hidden>
+    <button class="btn small primary" id="abTop" type="button" title="放進建築平立剖面圖＋結構平面圖,自動算整棟">整棟自動估算</button>
     <button class="btn small primary" id="v3dTop" type="button" title="把專案各樓層疊成 3D,照施工順序一層一層蓋起來;還沒開專案時會先請你選專案檔">3D 施工動畫</button><input type="file" id="open3DProj" accept=".json" hidden>
-    <button class="btn small" id="newProj" type="button">新案</button></div>
+    <button class="btn small" id="newProj" type="button">新案</button>
+    <button class="btn small" id="helpTop" type="button">使用說明</button></div>
 </header>
 
 <div class="layout">
@@ -885,6 +901,8 @@ async function openProjectFile(f) {
 }
 $('#openProj').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) openProjectFile(f); });
 $('#v3dTop').addEventListener('click', () => open3D());
+$('#abTop').addEventListener('click', openAuto);
+$('#helpTop').addEventListener('click', openHelp);
 $('#open3DProj').addEventListener('change', async e => { const f = e.target.files[0]; e.target.value = ''; if (f && await openProjectFile(f)) open3D(true); });
 $('#newProj').addEventListener('click', () => {
   const b = $('#newProj');
@@ -1112,6 +1130,158 @@ function demoDXF() {
   text('A4-文字', '示範層平面圖', 530, -220, 40);
   g(0, 'ENDSEC'); g(0, 'EOF');
   return out.join('\n');
+}
+
+/* ---------------- 整棟自動估算 ---------------- */
+const AB = { FA: null, FS: null, nameA: '', nameS: '', plan: null, unit: 1 };
+async function abReadDXF(file, label) {
+  const ext = file.name.split('.').pop().toLowerCase();
+  if (ext === 'dwg') throw new Error('這是 DWG,網頁讀不了。請在 AutoCAD／progeCAD 用「另存新檔 → DXF(ASCII)」再放進來,做法見下方說明。');
+  if (ext !== 'dxf') throw new Error('請放 DXF 檔');
+  const u8 = new Uint8Array(await file.arrayBuffer());
+  if (new TextDecoder('latin1').decode(u8.subarray(0, 18)) === 'AutoCAD Binary DXF') throw new Error('這是 Binary DXF,請另存成 ASCII 格式的 DXF。');
+  abMsg(`讀取${label}(${(u8.length / 1048576).toFixed(1)} MB)…`); await tick();
+  const doc = QE.parseDXF(u8); abMsg(`展開${label}的圖塊…`); await tick();
+  const F = QE.flattenDXF(doc); F._unit = QE.detectUnit(F, doc.insunits);
+  return F;
+}
+function abMsg(html, bad) { const el = $('#abMsg'); if (el) { el.innerHTML = html; el.className = 'ab-msg' + (bad ? ' bad' : ''); } }
+function abRoles(F) { const r = {}; for (const n of F.layerNames) r[n] = S.roles[n] || QE.guessRole(n); return r; }
+function abList() {
+  if (!AB.FA) return;
+  AB.plan = QE.planBuilding(AB.FA, AB.FS, abRoles(AB.FA));
+  const B = AB.plan;
+  if (!B.floors.length) { $('#abTable').innerHTML = ''; abMsg('建築圖裡找不到「○○層平面圖」這種圖名,沒辦法自動分層。請確認放的是平面圖的 DXF,或改用左邊「選擇一層平面圖」一層一層算。', true); $('#abRun').disabled = true; return; }
+  const secN = Object.keys(B.sec).length;
+  abMsg(`找到 <b>${B.floors.length}</b> 組樓層(建築圖名 ${B.planTitles} 個${AB.FS ? `、結構圖名 ${B.structTitles} 個` : ',沒有結構圖'});剖面高程 ${secN} 個${secN ? '' : '(樓高先用預設,請在表上改)'}。請檢查下表,樓高、版厚、相同樓層數可以直接改,不要的樓層取消勾選。`);
+  let h = '<div class="tablewrap"><table class="q ab-t"><thead><tr><th>算</th><th>樓層</th><th style="text-align:right">相同樓層數</th><th style="text-align:right">樓高 cm</th><th style="text-align:right">版厚 cm</th><th>建築圖</th><th>結構圖</th><th>說明</th></tr></thead><tbody>';
+  B.floors.forEach((f, i) => {
+    h += `<tr><td><input type="checkbox" data-ab="on" data-i="${i}" ${f.off ? '' : 'checked'} aria-label="計算 ${esc(f.name)}"></td><td><b>${esc(f.name)}</b></td>
+      <td class="n"><input type="number" min="1" value="${f.repeat}" data-ab="repeat" data-i="${i}" style="width:56px" aria-label="相同樓層數"></td>
+      <td class="n"><input type="number" min="1" value="${f.floorH}" data-ab="floorH" data-i="${i}" style="width:70px" aria-label="樓高"></td>
+      <td class="n"><input type="number" min="1" value="${f.slabT}" data-ab="slabT" data-i="${i}" style="width:56px" aria-label="版厚"></td>
+      <td class="small">${esc(f.plan) || '<span class="muted">—</span>'}</td><td class="small">${esc(f.struct) || '<span class="muted">—</span>'}</td><td class="small muted">${esc(f.hNote)}</td></tr>`;
+  });
+  h += '</tbody></table></div>';
+  $('#abTable').innerHTML = h;
+  $('#abTable').querySelectorAll('[data-ab]').forEach(c => c.addEventListener('change', e => {
+    const f = B.floors[+e.target.dataset.i], k = e.target.dataset.ab;
+    if (k === 'on') f.off = !e.target.checked; else f[k] = Math.max(1, parseFloat(e.target.value) || 1);
+  }));
+  const run = $('#abRun'); run.disabled = false; run.textContent = '開始計算整棟'; run.dataset.confirm = '';
+}
+async function abRun() {
+  const B = AB.plan; if (!B) return;
+  const todo = B.floors.filter(f => !f.off); if (!todo.length) { abMsg('沒有勾選要算的樓層', true); return; }
+  const run = $('#abRun');
+  const ne = (S.project.elevs || []).length;
+  if ((S.project.floors.length || ne) && run.dataset.confirm !== '1') { run.dataset.confirm = '1'; run.textContent = `會取代專案總表現有的 ${S.project.floors.length} 組樓層${ne ? `、${ne} 個立面` : ''},再按一次開始`; return; }
+  run.disabled = true;
+  const roles = abRoles(AB.FA), base = Object.assign({}, S.params, { unitToCm: AB.FA._unit.unitToCm });
+  const ctx = QE.newBuildingCtx(AB.FA, AB.FS, roles, B.structRoles, AB.FS ? AB.FS._unit.unitToCm : null);
+  const out = [], fail = [];
+  for (let i = 0; i < todo.length; i++) {
+    abMsg(`計算中 ${i + 1} / ${todo.length}:<b>${esc(todo[i].name)}</b>(一層約 1～3 秒)`); await tick();
+    try { const r = QE.runBuildingFloor(ctx, todo[i], base, S.finishes); if (r) out.push(r); else fail.push(todo[i].name); }
+    catch (e) { console.error(e); fail.push(todo[i].name + '(' + e.message + ')'); }
+  }
+  S.project.floors = out; S.project.elevs = []; // 換一棟算,舊案的立面不能留
+  if (!S.project.name) { S.project.name = AB.nameA.replace(/\.dxf$/i, ''); $('#projName').value = S.project.name; }
+  saveLocal(); renderTab();
+  const conc = f => (f.items.find(i => i.item === '混凝土 — 小計') || { qty: 0 }).qty;
+  const area = out.reduce((s, f) => s + f.floorArea * f.repeat, 0), cT = out.reduce((s, f) => s + conc(f) * f.repeat, 0);
+  let h = `完成 <b>${out.length}</b> 組樓層:總樓地板 <b>${fmt(area, 1)}</b> m²、結構混凝土 <b>${fmt(cT, 1)}</b> m³(不含損耗)。${fail.length ? `<br><span class="bad">算不出來:${esc(fail.join('、'))}</span>` : ''}`;
+  const warn = out.filter(f => f.note);
+  if (warn.length) h += '<details style="margin-top:6px"><summary>' + (out.some(f => f.warn) ? `有 ${out.filter(f => f.warn).length} 層要留意,` : '') + '各層說明(點開看)</summary><ul class="small">' + warn.map(f => `<li><b>${esc(f.name)}</b>:${esc(f.note)}</li>`).join('') + '</ul></details>';
+  h += '<div class="actions"><button class="btn primary" type="button" id="ab3d">看 3D 施工動畫</button><button class="btn" type="button" id="abProj">看專案總表</button><button class="btn" type="button" id="abXls">匯出 Excel</button><button class="btn" type="button" id="abSave">儲存專案檔(給同事)</button></div>';
+  abMsg(h);
+  $('#ab3d').addEventListener('click', () => { abClose(); open3D(); });
+  $('#abProj').addEventListener('click', () => { abClose(); document.querySelector('[data-tab=project]').click(); document.querySelector('.results').scrollIntoView({ behavior: 'smooth' }); });
+  $('#abXls').addEventListener('click', exportXLSX);
+  $('#abSave').addEventListener('click', () => $('#saveProj').click());
+  run.disabled = false; run.textContent = '重新計算'; run.dataset.confirm = '';
+}
+function abClose() { const o = $('#abOv'); if (o) o.remove(); document.body.style.overflow = ''; }
+function openAuto() {
+  if ($('#abOv')) return;
+  const ov = document.createElement('div'); ov.className = 'ab-ov'; ov.id = 'abOv';
+  ov.innerHTML = `<div class="ab-box" role="dialog" aria-label="整棟自動估算">
+    <div class="ab-head"><h2>整棟自動估算</h2><button class="btn small" type="button" id="abX">關閉</button></div>
+    <p class="small muted">放進建築平立剖面圖(各層平面＋剖面)和結構平面圖的 DXF,程式會自動找出各層、用剖面高程算樓高、一層一層算數量。算完可以看 3D、出 Excel、存專案檔給同事。</p>
+    <div class="ab-files">
+      <label class="ab-drop" id="abDA"><b>① 建築平立剖面圖 DXF</b><span class="small muted">必要。拖進來或點一下選檔</span><span class="ab-name" id="abNA">${esc(AB.nameA) || '尚未選'}</span><input type="file" accept=".dxf,.dwg" hidden id="abFA"></label>
+      <label class="ab-drop" id="abDS"><b>② 結構平面圖 DXF</b><span class="small muted">建議。柱、梁、地下室會比較準</span><span class="ab-name" id="abNS">${esc(AB.nameS) || '尚未選(可以不放)'}</span><input type="file" accept=".dxf,.dwg" hidden id="abFS"></label>
+    </div>
+    <div id="abMsg" class="ab-msg"></div>
+    <div id="abTable"></div>
+    <div class="actions"><button class="btn primary" type="button" id="abRun" disabled>開始計算整棟</button></div>
+    <details class="ab-help"><summary>圖檔要怎麼準備?(DWG 轉 DXF)</summary>
+      <ol class="small">
+        <li>用 AutoCAD 或 progeCAD 打開 DWG,<b>不要炸開圖塊</b>(門窗、衛浴設備要是圖塊才認得出來)。</li>
+        <li>「另存新檔」→ 檔案類型選 <b>DXF</b>,版本選 <b>AutoCAD 2013</b> 或更新。</li>
+        <li>按「工具／選項」→ DXF 選項選 <b>ASCII</b>(不要選二進位 Binary)→ 存檔。</li>
+        <li>建築圖要有「○○層平面圖」「九至十二層平面圖」「屋突一層平面圖」這種圖名,剖面圖上有「2FL+665」這種高程,程式才會自動分層、算樓高。</li>
+        <li>結構圖要有「○○結構平面圖(2F)」這種圖名。</li>
+        <li>檔案只在你的電腦裡處理,不會上傳。</li>
+      </ol>
+    </details></div>`;
+  document.body.appendChild(ov); document.body.style.overflow = 'hidden';
+  $('#abX').addEventListener('click', abClose);
+  const hook = (dropId, inputId, which) => {
+    const take = async f => {
+      if (!f) return;
+      try {
+        const F = await abReadDXF(f, which === 'A' ? '建築圖' : '結構圖');
+        if (which === 'A') { AB.FA = F; AB.nameA = f.name; } else { AB.FS = F; AB.nameS = f.name; }
+        if (!$('#abOv')) return; // 讀檔中途關掉視窗:資料留著,下次打開再列
+        $(which === 'A' ? '#abNA' : '#abNS').textContent = f.name;
+        if (AB.FA && AB.FS && AB.FA._unit.unitToCm !== AB.FS._unit.unitToCm) toast('注意:建築圖和結構圖的單位好像不一樣');
+        if (AB.FA) abList(); else abMsg('結構圖讀好了,再放建築平立剖面圖。');
+      } catch (e) { console.error(e); abMsg('讀取失敗:' + esc(e.message), true); }
+    };
+    $('#' + inputId).addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; take(f); });
+    const d = $('#' + dropId);
+    ['dragenter', 'dragover'].forEach(ev => d.addEventListener(ev, e => { e.preventDefault(); d.classList.add('hover'); }));
+    ['dragleave', 'drop'].forEach(ev => d.addEventListener(ev, e => { e.preventDefault(); d.classList.remove('hover'); }));
+    d.addEventListener('drop', e => take(e.dataTransfer.files[0]));
+  };
+  hook('abDA', 'abFA', 'A'); hook('abDS', 'abFS', 'S');
+  $('#abRun').addEventListener('click', abRun);
+  if (AB.FA) abList(); else abMsg('先放建築平立剖面圖。');
+}
+
+/* ---------------- 使用說明 ---------------- */
+function openHelp() {
+  if ($('#abOv')) return;
+  const ov = document.createElement('div'); ov.className = 'ab-ov'; ov.id = 'abOv';
+  ov.innerHTML = `<div class="ab-box ab-doc" role="dialog" aria-label="使用說明">
+    <div class="ab-head"><h2>使用說明</h2><button class="btn small" type="button" id="abX">關閉</button></div>
+    <p>這是網頁程式,<b>不用安裝</b>。用 Chrome 或 Edge 打開網址就能用,圖檔只在自己電腦裡處理,不會上傳。<br>
+    網址:<a href="https://sheng01161001-wq.github.io/Building-cost-estimation-program/" target="_blank" rel="noopener">sheng01161001-wq.github.io/Building-cost-estimation-program</a>(分享給同事直接傳這個網址)</p>
+    <h3>方法一:整棟自動(建議)</h3>
+    <ol><li>按上方「<b>整棟自動估算</b>」。</li>
+    <li>放進「建築平立剖面圖 DXF」,再放「結構平面圖 DXF」(可以不放,但柱、梁、地下室會比較不準)。</li>
+    <li>程式列出各樓層、樓高、版厚、相同樓層數,檢查一下,有錯就直接改。</li>
+    <li>按「開始計算整棟」,一層約 1～3 秒。</li>
+    <li>算完可以:看 <b>3D 施工動畫</b>、看<b>專案總表</b>、<b>匯出 Excel</b>、<b>儲存專案檔</b>(.json,傳給同事用「開啟專案檔」就能接著看)。</li>
+    <li>樓層名稱後面有 ⚠ 的,點開「要留意」看原因(例如地下室只用結構圖、陽台沒圍起來不算裝修)。</li></ol>
+    <h3>方法二:一層一層算</h3>
+    <ol><li>左邊「01 匯入圖檔」放平面圖 DXF。</li><li>「02」點圖名(例如三層平面圖)自動框選,或手動框選。</li>
+    <li>「03」確認圖層對應(牆種、牆厚),「04」填樓高、版厚、相同樓層數 →「計算這一層」→「加入專案總表」。</li></ol>
+    <h3>3D 施工動畫怎麼操作</h3>
+    <ul><li>左上:看整棟／前／後／左／右／上,一鍵轉過去。</li>
+    <li>滑鼠:左鍵拖曳旋轉、右鍵拖曳平移、滾輪往游標處縮放(拉到底會往前走進樓裡)、點兩下拉近。手機:一指旋轉、兩指縮放平移。</li>
+    <li>右邊「顯示」可以分開開關:結構／牆／門窗／欄杆／設備。點樓層名稱直接跳到那層蓋完。</li>
+    <li>要連網(3D 元件從網路下載)。畫面上出現黃色提示「沒有開圖形加速」:Chrome 右上 ⋮ → 設定 → 系統 → 打開「使用圖形加速功能」→ 重新啟動。</li></ul>
+    <h3>圖檔怎麼準備(DWG 轉 DXF)</h3>
+    <ol><li>AutoCAD／progeCAD 打開 DWG,<b>不要炸開圖塊</b>。</li><li>另存新檔 → DXF,版本 AutoCAD 2013 以後,DXF 選項選 <b>ASCII</b>。</li>
+    <li>建築圖要有「○○層平面圖」這類圖名、剖面圖上有「2FL+665」這類高程;結構圖要有「○○結構平面圖(2F)」圖名。</li></ol>
+    <h3>常見問題</h3>
+    <ul><li><b>找不到樓層</b>:圖名不是「○○層平面圖」寫法,請用方法二。</li>
+    <li><b>樓高是「預設」</b>:剖面圖沒抓到高程,請在表上照剖面圖改。</li>
+    <li><b>數量是估算</b>,請以施工圖核對。鋼筋用含筋率估,不是照配筋表。</li></ul></div>`;
+  document.body.appendChild(ov); document.body.style.overflow = 'hidden';
+  $('#abX').addEventListener('click', abClose);
 }
 
 /* ---------------- 3D 施工動畫 ---------------- */
