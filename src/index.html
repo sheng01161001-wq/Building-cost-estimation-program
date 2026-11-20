@@ -141,6 +141,8 @@ details summary { cursor: pointer; color: var(--accent); font-size: 13px; }
 .v3d-top .sp { flex: 1; }
 .v3d-top label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
 .v3d-bar input[type=range] { flex: 1; min-width: 120px; accent-color: var(--brand-orange); }
+.v3d-msg { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; padding: 24px; max-width: 420px; }
+.v3d-msg b { font-size: 18px; }
 .v3d-main { flex: 1; display: flex; min-height: 0; }
 .v3d-cv { flex: 1; position: relative; min-width: 0; }
 .v3d-cv canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: grab; display: block; }
@@ -169,6 +171,7 @@ details summary { cursor: pointer; color: var(--accent); font-size: 13px; }
   <div class="proj"><label for="projName" class="muted small">案名</label><input type="text" id="projName" placeholder="例:CN25010 集合住宅">
     <button class="btn small" id="saveProj" type="button" title="把本案的樓層、立面、圖層對應與所有設定存成一個檔,可傳給同事">儲存專案檔</button>
     <label class="btn small" for="openProj" title="開啟之前儲存的專案檔">開啟專案檔</label><input type="file" id="openProj" accept=".json" hidden>
+    <button class="btn small primary" id="v3dTop" type="button" title="把專案各樓層疊成 3D,照施工順序一層一層蓋起來;還沒開專案時會先請你選專案檔">3D 施工動畫</button><input type="file" id="open3DProj" accept=".json" hidden>
     <button class="btn small" id="newProj" type="button">新案</button></div>
 </header>
 
@@ -791,7 +794,7 @@ function renderProject() {
   el.querySelectorAll('[data-del]').forEach(c => c.addEventListener('click', e => { fl.splice(+e.target.dataset.del, 1); saveLocal(); renderTab(); }));
   el.querySelectorAll('[data-edel]').forEach(c => c.addEventListener('click', e => { ev.splice(+e.target.dataset.edel, 1); saveLocal(); renderTab(); }));
   $('#xlsBtn').addEventListener('click', exportXLSX);
-  $('#v3dBtn').addEventListener('click', open3D);
+  $('#v3dBtn').addEventListener('click', () => open3D());
   $('#copyBtn').addEventListener('click', async () => { const rows = [['工種', '項目', '單位', '數量', '損耗%', '含損耗']].concat(projectTotals().map(t => [t.trade, t.item, t.unit, t.qty.toFixed(2), t.loss, t.total.toFixed(2)])); try { await navigator.clipboard.writeText(rows.map(r => r.join('\t')).join('\n')); toast('已複製,可直接貼到 Excel'); } catch (e) { toast('無法使用剪貼簿'); } });
   $('#clearBtn').addEventListener('click', () => { if (el.dataset.confirm !== '1') { el.dataset.confirm = '1'; $('#clearBtn').textContent = '再按一次確認清空'; return; } S.project.floors = []; S.project.elevs = []; el.dataset.confirm = ''; saveLocal(); renderTab(); });
 }
@@ -858,8 +861,7 @@ $('#saveProj').addEventListener('click', async () => {
   const name = (S.project.name || '建築估算') + '_專案.json';
   await saveFile(name, new TextEncoder().encode(JSON.stringify(projectFile(), null, 1)));
 });
-$('#openProj').addEventListener('change', async e => {
-  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+async function openProjectFile(f) {
   try {
     const d = JSON.parse(await f.text());
     if (d.app !== 'building-estimator') throw new Error('不是建築估算程式的專案檔');
@@ -871,8 +873,12 @@ $('#openProj').addEventListener('change', async e => {
     if (S.F) { buildRenderCache(); renderLayers(); }
     if (S.A) recompute(); else renderTab();
     toast('已開啟專案:' + (S.project.name || f.name));
-  } catch (err) { toast('開啟失敗:' + err.message); }
-});
+    return true;
+  } catch (err) { toast('開啟失敗:' + err.message); return false; }
+}
+$('#openProj').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) openProjectFile(f); });
+$('#v3dTop').addEventListener('click', () => open3D());
+$('#open3DProj').addEventListener('change', async e => { const f = e.target.files[0]; e.target.value = ''; if (f && await openProjectFile(f)) open3D(true); });
 $('#newProj').addEventListener('click', () => {
   const b = $('#newProj');
   if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = '確定清空?'; setTimeout(() => { b.dataset.confirm = ''; b.textContent = '新案'; }, 4000); return; }
@@ -1190,22 +1196,31 @@ function v3SlabGeo(THREE, loops, T) {
   const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.computeVertexNormals();
   return geo;
 }
-async function open3D() {
+async function open3D(fromPicker) {
   if (V3.open) return;
   const plan = v3Plan(S.project.floors);
-  if (!plan.levels.length) { toast(S.project.floors.length ? '這些樓層沒有位置資料(舊版加入的),請重新「計算這一層」再加入專案總表' : '專案總表還沒有樓層'); return; }
-  if (!V3.THREE) {
-    toast('載入 3D 元件中…');
-    try { V3.THREE = await import('https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js'); }
-    catch (e) { toast('3D 元件載入失敗,請確認有連上網路'); return; }
+  if (!plan.levels.length) {
+    // 還沒有可用的樓層:直接請使用者選專案檔(選好就自動開 3D)
+    if (!fromPicker) { toast('請選專案檔(.json),選好就會開始 3D 動畫'); $('#open3DProj').click(); return; }
+    toast(S.project.floors.length ? '這個專案的樓層沒有位置資料(舊版加入的),請重新「計算這一層」再加入專案總表' : '這個專案檔裡沒有樓層'); return;
   }
-  if (V3.open) return;
   V3.open = true;
-  try { v3Build(plan); } catch (e) { console.error(e); V3.open = false; cancelAnimationFrame(V3.raf); const o = $('#v3d'); if (o) o.remove(); document.body.style.overflow = ''; toast('3D 畫面開不起來:' + (e.message || e)); }
-}
-function v3Build(plan) {
-  const THREE = V3.THREE;
   const ov = document.createElement('div'); ov.className = 'v3d'; ov.id = 'v3d';
+  ov.innerHTML = '<div class="v3d-msg"><b>3D 載入中…</b><span class="small muted">第一次要從網路下載 3D 元件,約幾秒鐘</span></div>';
+  document.body.appendChild(ov); document.body.style.overflow = 'hidden';
+  const fail = msg => {
+    cancelAnimationFrame(V3.raf);
+    ov.innerHTML = `<div class="v3d-msg"><b>3D 畫面開不起來</b><span>${esc(msg)}</span><button class="btn primary" type="button">關閉</button></div>`;
+    ov.querySelector('button').addEventListener('click', () => { ov.remove(); document.body.style.overflow = ''; V3.open = false; });
+  };
+  if (!V3.THREE) {
+    try { V3.THREE = await import('https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js'); }
+    catch (e) { console.error(e); fail('3D 元件下載失敗,請確認電腦有連上網路後再按一次。'); return; }
+  }
+  try { v3Build(plan, ov); } catch (e) { console.error(e); fail((e && e.message) || String(e)); }
+}
+function v3Build(plan, ov) {
+  const THREE = V3.THREE;
   ov.innerHTML = `<div class="v3d-top"><b>3D 施工動畫</b><span class="small muted" id="v3Info"></span><span class="sp"></span>
     <label class="small"><input type="checkbox" id="v3Ghost" checked> 顯示還沒蓋的部分</label>
     <button class="btn small" id="v3Reset" type="button">重設視角</button><button class="btn small" id="v3Close" type="button">關閉</button></div>
@@ -1216,7 +1231,6 @@ function v3Build(plan) {
     <div class="v3d-bar"><button class="btn small primary" id="v3Play" type="button">▶ 播放</button>
     <input type="range" id="v3T" min="0" step="0.01" value="0" aria-label="施工進度"><span class="num small" id="v3Lbl"></span>
     <select id="v3Spd" aria-label="速度"><option value="0.6">慢</option><option value="1.5" selected>中</option><option value="4">快</option></select></div>`;
-  document.body.appendChild(ov); document.body.style.overflow = 'hidden';
   const info = [`共 ${plan.levels.length} 層`];
   if (plan.warn.length) info.push('⚠ 柱位對不上、改用外框置中:' + plan.warn.join('、'));
   if (plan.skipped.length) info.push('沒有位置資料(請重算再加入):' + plan.skipped.join('、'));
