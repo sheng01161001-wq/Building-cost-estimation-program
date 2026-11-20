@@ -2998,7 +2998,7 @@ function v3Build(plan, ov) {
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(gs, gs), new THREE.MeshBasicMaterial({ color: '#8f8a80', transparent: true, opacity: 0.12, depthWrite: false, side: THREE.DoubleSide }));
   ground.rotation.x = -Math.PI / 2; ground.position.copy(grid.position); scene.add(ground);
   // 相機(自己寫的環繞控制)
-  const C = {};
+  const C = {}; V3.C = C;
   const resetCam = () => Object.assign(C, { th: -0.75, ph: 1.08, r: Math.max(30, span * 2.1), tx: (bx0 + bx1) / 2, ty: (zMin + zMax) / 2, tz: -(by0 + by1) / 2 });
   resetCam();
   const applyCam = () => { camera.position.set(C.tx + C.r * Math.sin(C.ph) * Math.sin(C.th), C.ty + C.r * Math.cos(C.ph), C.tz + C.r * Math.sin(C.ph) * Math.cos(C.th)); camera.lookAt(C.tx, C.ty, C.tz); };
