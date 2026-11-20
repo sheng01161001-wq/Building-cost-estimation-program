@@ -794,10 +794,20 @@ function analyzeRegion(F, box, layerRoles, params, onProgress) {
   let beamLen = 0; let beamFromLayer = false;
   for (const p of polys) if (roleOf[p.L].role === 'beam') { const q = p.p; for (let i = 0; i + 3 < q.length; i += 2) beamLen += Math.hypot(q[i + 2] - q[i], q[i + 3] - q[i + 1]); }
   if (beamLen > 0) { beamFromLayer = true; beamLen = beamLen * U / 2 / 100; }
+  // 梁的位置(給 3D 用):梁兩側邊線配對成中心線
+  const beamSegs = [];
+  if (beamFromLayer) {
+    const bs = [], seen = new Set();
+    for (const p of polys) if (roleOf[p.L].role === 'beam') { const q = p.p; for (let i = 0; i + 3 < q.length; i += 2) {
+      const x0 = q[i] * U, y0 = q[i + 1] * U, x1 = q[i + 2] * U, y1 = q[i + 3] * U, l = Math.hypot(x1 - x0, y1 - y0);
+      if (l < 1) continue; const k = [x0, y0, x1, y1].map(Math.round).join(','); if (seen.has(k)) continue; seen.add(k);
+      bs.push([x0, y0, x1, y1, l, Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1)]); } }
+    beamSegs.push(...pairCenters(bs, 15, 120, 30).cl);
+  }
   // 開口分配到牆種、房間、外部
   assignOpenings(openings, polys, roleOf, lab, nx, ny, px, box, U, rooms);
   if (onProgress) onProgress(1);
-  return { box, px, nx, ny, lab, rooms, footprint, walls, columns, beamLen, beamFromLayer, openings, labelsFound: labels.length };
+  return { box, px, nx, ny, lab, rooms, footprint, walls, columns, beamLen, beamFromLayer, beamSegs, openings, labelsFound: labels.length };
 }
 
 function dilate(src, nx, ny, r) {
@@ -947,33 +957,52 @@ function wallLengths(polys, roleOf, U) {
     }
   }
   for (const k in res) {
-    const thk = res[k].thk, segs = segsOf[k].segs, dMin = thk * 0.7, dMax = thk * 1.3;
-    segs.sort((a, b) => a[5] - b[5]);
-    let tot = 0;
-    for (let ai = 0; ai < segs.length; ai++) {
-      const a = segs[ai], L = a[4];
-      if (L <= thk * 1.3) continue; // 牆頭
-      const ux = (a[2] - a[0]) / L, uy = (a[3] - a[1]) / L, iv = [];
-      for (let ci = 0; ci < segs.length; ci++) {
-        const c = segs[ci];
-        if (c[5] > a[7] + dMax) break;
-        if (ci === ai || c[7] < a[5] - dMax || c[6] > a[8] + dMax || c[8] < a[6] - dMax) continue;
-        const cx = c[2] - c[0], cy = c[3] - c[1];
-        if (Math.abs(ux * cy - uy * cx) / c[4] > 0.03) continue; // 不平行
-        const d = Math.abs((c[0] - a[0]) * uy - (c[1] - a[1]) * ux);
-        if (d < dMin || d > dMax) continue;
-        let t0 = (c[0] - a[0]) * ux + (c[1] - a[1]) * uy, t1 = (c[2] - a[0]) * ux + (c[3] - a[1]) * uy;
-        if (t0 > t1) { const tt = t0; t0 = t1; t1 = tt; }
-        t0 = Math.max(0, t0); t1 = Math.min(L, t1);
-        if (t1 > t0) iv.push([t0, t1]);
-      }
-      iv.sort((x, y) => x[0] - y[0]);
-      let e = -1;
-      for (const [s, t] of iv) { if (t <= e) continue; tot += t - Math.max(s, e); e = t; }
-    }
-    res[k].len = tot / 2 / 100; res[k].layers = [...res[k].layers];
+    const thk = res[k].thk, pc = pairCenters(segsOf[k].segs, thk * 0.7, thk * 1.3, thk * 1.3);
+    res[k].len = pc.tot / 2 / 100; res[k].layers = [...res[k].layers]; res[k].segs = pc.cl;
   }
   return Object.values(res);
+}
+
+/* 兩條平行線(間距 dMin~dMax)配成一組 → 重疊總長(兩邊各算一次)與中心線 [x0,y0,x1,y1,間距](cm) */
+function pairCenters(segs, dMin, dMax, minLen) {
+  segs.sort((a, b) => a[5] - b[5]);
+  let tot = 0; const cl = [];
+  for (let ai = 0; ai < segs.length; ai++) {
+    const a = segs[ai], L = a[4];
+    if (L <= minLen) continue; // 牆頭
+    const ux = (a[2] - a[0]) / L, uy = (a[3] - a[1]) / L, iv = [];
+    const sg = ux > 1e-9 || (Math.abs(ux) <= 1e-9 && uy > 0) ? 1 : -1; // 統一方向,兩條邊線只有一條會輸出中心線
+    for (let ci = 0; ci < segs.length; ci++) {
+      const c = segs[ci];
+      if (c[5] > a[7] + dMax) break;
+      if (ci === ai || c[7] < a[5] - dMax || c[6] > a[8] + dMax || c[8] < a[6] - dMax) continue;
+      const cx = c[2] - c[0], cy = c[3] - c[1];
+      if (Math.abs(ux * cy - uy * cx) / c[4] > 0.03) continue; // 不平行
+      const sd = (c[0] - a[0]) * uy - (c[1] - a[1]) * ux, d = Math.abs(sd);
+      if (d < dMin || d > dMax) continue;
+      let t0 = (c[0] - a[0]) * ux + (c[1] - a[1]) * uy, t1 = (c[2] - a[0]) * ux + (c[3] - a[1]) * uy;
+      if (t0 > t1) { const tt = t0; t0 = t1; t1 = tt; }
+      t0 = Math.max(0, t0); t1 = Math.min(L, t1);
+      if (t1 > t0) iv.push([t0, t1, sd]);
+    }
+    iv.sort((x, y) => x[0] - y[0]);
+    let e = -1;
+    for (const [s, t] of iv) { if (t <= e) continue; tot += t - Math.max(s, e); e = t; }
+    // 中心線:只取在左側的配對,避免同一道牆畫兩次
+    e = -1; let cur = null;
+    for (const [s, t, sd] of iv) {
+      if (sd * sg <= 0 || t <= e) continue;
+      if (cur && s <= cur[1] + 1 && Math.abs(sd - cur[2]) < 2) { cur[1] = Math.max(cur[1], t); e = cur[1]; continue; }
+      if (cur) cl.push(cur); cur = [Math.max(s, e), t, sd]; e = t;
+    }
+    if (cur) cl.push(cur);
+    for (let i = cl.length - 1; i >= 0 && Array.isArray(cl[i]) && cl[i].length === 3; i--) {
+      const [s, t, sd] = cl[i]; if (t - s < 5) { cl.splice(i, 1); continue; }
+      const ox = uy * sd / 2, oy = -ux * sd / 2;
+      cl[i] = [a[0] + ux * s + ox, a[1] + uy * s + oy, a[0] + ux * t + ox, a[1] + uy * t + oy, Math.abs(sd)];
+    }
+  }
+  return { tot, cl };
 }
 
 function polyArea(q) { let A = 0; for (let i = 0; i + 3 < q.length; i += 2) A += q[i] * q[i + 3] - q[i + 2] * q[i + 1]; const n = q.length; if (q[0] !== q[n - 2] || q[1] !== q[n - 1]) A += q[n - 2] * q[1] - q[0] * q[n - 1]; return Math.abs(A) / 2; }
@@ -1558,6 +1587,52 @@ function elevationItems(E, params, opt) {
   return items;
 }
 
-const api = { EROLES, guessElevRole, materialName, analyzeElevation, elevationItems, findPlanTitles, planBoxNearTitle, floorRepeat, detectUnit, mergedType, parseDXF, flattenDXF, guessRole, ROLES, ROOM_TYPES, roomTypeOf, isRoomLabel, defaultFinishes, defaultParams, analyzeRegion, computeQuantities, buildXLSX, decodeBytes, cleanMText, tileArea };
+/* ------------------------------------------------------------------ */
+/* 10. 3D 用的樓層幾何(公尺,圖面原座標)                                 */
+/* ------------------------------------------------------------------ */
+const WALL_CODE = { wall_rc: 'rc', wall_brick: 'brick', wall_block: 'block', wall_light: 'light' };
+function floorGeom(A, params) {
+  const U = params.unitToCm, r2 = v => Math.round(v * 100) / 100;
+  const walls = [];
+  for (const w of A.walls || []) for (const g of w.segs || []) walls.push([r2(g[0] / 100), r2(g[1] / 100), r2(g[2] / 100), r2(g[3] / 100), r2(w.thk / 100), WALL_CODE[w.role] || 'rc']);
+  const cols = (A.columns || []).map(c => [r2(c.cx * U / 100), r2(c.cy * U / 100), r2(c.w / 100), r2(c.h / 100)]);
+  const beams = (A.beamSegs || []).map(g => [r2(g[0] / 100), r2(g[1] / 100), r2(g[2] / 100), r2(g[3] / 100), r2(g[4] / 100)]);
+  const slab = ((A.footprint && A.footprint.outline) || []).map(lp => { const o = []; for (const q of lp) o.push(r2(q[0] * U / 100), r2(q[1] * U / 100)); return o; });
+  return { walls, cols, beams, slab };
+}
+/* 兩組柱位對齊:找平移量 d 使 B + d ≈ A(柱網投票),回傳 {dx, dy, n 對到幾支} */
+function alignByColumns(A, B, guess, tol) {
+  tol = tol || 0.3; if (!A.length || !B.length) return null;
+  const votes = new Map(), q = tol;
+  for (const a of A) for (const b of B) {
+    const dx = a[0] - b[0], dy = a[1] - b[1], k = Math.round(dx / q) + ',' + Math.round(dy / q);
+    const v = votes.get(k); if (v) { v.n++; v.sx += dx; v.sy += dy; } else votes.set(k, { n: 1, sx: dx, sy: dy });
+  }
+  // A 的柱位放進格網,查「平移後有沒有對到」只看附近格子
+  const cell = tol * 2, grid = new Map(), key = (x, y) => Math.floor(x / cell) + ',' + Math.floor(y / cell);
+  for (const a of A) { const k = key(a[0], a[1]); (grid.get(k) || grid.set(k, []).get(k)).push(a); }
+  const hit = (x, y) => { const gx = Math.floor(x / cell), gy = Math.floor(y / cell); for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) { const L = grid.get((gx + i) + ',' + (gy + j)); if (L && L.some(a => Math.abs(a[0] - x) < tol && Math.abs(a[1] - y) < tol)) return true; } return false; };
+  // 只細算票數最多的前 30 個候選
+  const cands = [...votes.values()].sort((a, b) => b.n - a.n).slice(0, 30);
+  let best = null, bs = -Infinity;
+  for (const v of cands) {
+    const dx = v.sx / v.n, dy = v.sy / v.n;
+    let n = 0; for (const b of B) if (hit(b[0] + dx, b[1] + dy)) n++;
+    const sc = n - (guess ? Math.hypot(dx - guess[0], dy - guess[1]) * 1e-3 : 0);
+    if (sc > bs) { bs = sc; best = { dx, dy, n }; }
+  }
+  return best;
+}
+function shiftGeom(g, dx, dy) {
+  const r2 = v => Math.round(v * 100) / 100;
+  return {
+    walls: g.walls.map(w => [r2(w[0] + dx), r2(w[1] + dy), r2(w[2] + dx), r2(w[3] + dy), w[4], w[5]]),
+    cols: g.cols.map(c => [r2(c[0] + dx), r2(c[1] + dy), c[2], c[3]]),
+    beams: g.beams.map(b => [r2(b[0] + dx), r2(b[1] + dy), r2(b[2] + dx), r2(b[3] + dy), b[4]]),
+    slab: g.slab.map(lp => lp.map((v, i) => r2(v + (i % 2 ? dy : dx)))),
+  };
+}
+
+const api = { EROLES, guessElevRole, materialName, analyzeElevation, elevationItems, findPlanTitles, planBoxNearTitle, floorRepeat, detectUnit, mergedType, parseDXF, flattenDXF, guessRole, ROLES, ROOM_TYPES, roomTypeOf, isRoomLabel, defaultFinishes, defaultParams, analyzeRegion, computeQuantities, buildXLSX, decodeBytes, cleanMText, tileArea, floorGeom, alignByColumns, shiftGeom };
 if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.QE = api;
 })(typeof window !== 'undefined' ? window : globalThis);

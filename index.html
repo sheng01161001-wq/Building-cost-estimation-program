@@ -135,7 +135,29 @@ table.q td.memo { color: var(--muted); font-size: 12px; }
 .small { font-size: 12.5px; }
 details summary { cursor: pointer; color: var(--accent); font-size: 13px; }
 .finish select, .finish input { width: 100%; }
-.toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--paper); padding: 8px 16px; border-radius: 6px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 10; }
+.v3d { position: fixed; inset: 0; z-index: 1000; background: var(--paper); display: flex; flex-direction: column; }
+.v3d-top, .v3d-bar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: var(--sheet); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.v3d-bar { border-bottom: 0; border-top: 1px solid var(--line); }
+.v3d-top .sp { flex: 1; }
+.v3d-top label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+.v3d-bar input[type=range] { flex: 1; min-width: 120px; accent-color: var(--brand-orange); }
+.v3d-main { flex: 1; display: flex; min-height: 0; }
+.v3d-cv { flex: 1; position: relative; min-width: 0; }
+.v3d-cv canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: grab; display: block; }
+.v3d-hint { position: absolute; left: 10px; bottom: 8px; color: #6b665c; pointer-events: none; }
+.v3d-side { width: 260px; flex: none; border-left: 1px solid var(--line); background: var(--sheet); padding: 12px; display: flex; flex-direction: column; gap: 12px; overflow: auto; }
+.v3d-now b, .v3d-conc b.num { display: block; font-size: 18px; }
+.v3d-conc div { display: flex; align-items: baseline; gap: 4px; } .v3d-conc div b.num { display: inline; }
+.v3d-conc > i, .v3d-fl i { display: block; height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin-top: 4px; }
+.v3d-conc > i b, .v3d-fl i b { display: block; height: 100%; width: 0; background: var(--brand-orange); }
+.v3d-leg { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; color: var(--muted); }
+.v3d-leg i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; border: 1px solid rgba(0,0,0,.15); }
+.v3d-floors { display: flex; flex-direction: column; gap: 2px; }
+.v3d-fl { display: grid; grid-template-columns: 92px 1fr; align-items: center; gap: 8px; background: none; border: 0; padding: 3px 4px; border-radius: 4px; cursor: pointer; text-align: left; font-size: 12px; }
+.v3d-fl:hover { background: var(--accent-soft); }
+.v3d-fl i { margin-top: 0; }
+@media (max-width: 720px) { .v3d-main { flex-direction: column; } .v3d-side { width: auto; max-height: 34vh; border-left: 0; border-top: 1px solid var(--line); } }
+.toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--paper); padding: 8px 16px; border-radius: 6px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 1100; }
 .toast.show { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
@@ -253,7 +275,8 @@ details summary { cursor: pointer; color: var(--accent); font-size: 13px; }
 </section>
 <div class="toast" id="toast"></div>
 
-<script>/* 建材數量估算 — 計算核心 (DXF 解析 / 圖元展開 / 房間偵測 / 數量計算)
+<script>
+/* 建材數量估算 — 計算核心 (DXF 解析 / 圖元展開 / 房間偵測 / 數量計算)
  * 純 JavaScript,瀏覽器與 Node 皆可執行。 */
 (function (root) {
 'use strict';
@@ -1049,10 +1072,20 @@ function analyzeRegion(F, box, layerRoles, params, onProgress) {
   let beamLen = 0; let beamFromLayer = false;
   for (const p of polys) if (roleOf[p.L].role === 'beam') { const q = p.p; for (let i = 0; i + 3 < q.length; i += 2) beamLen += Math.hypot(q[i + 2] - q[i], q[i + 3] - q[i + 1]); }
   if (beamLen > 0) { beamFromLayer = true; beamLen = beamLen * U / 2 / 100; }
+  // 梁的位置(給 3D 用):梁兩側邊線配對成中心線
+  const beamSegs = [];
+  if (beamFromLayer) {
+    const bs = [], seen = new Set();
+    for (const p of polys) if (roleOf[p.L].role === 'beam') { const q = p.p; for (let i = 0; i + 3 < q.length; i += 2) {
+      const x0 = q[i] * U, y0 = q[i + 1] * U, x1 = q[i + 2] * U, y1 = q[i + 3] * U, l = Math.hypot(x1 - x0, y1 - y0);
+      if (l < 1) continue; const k = [x0, y0, x1, y1].map(Math.round).join(','); if (seen.has(k)) continue; seen.add(k);
+      bs.push([x0, y0, x1, y1, l, Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1)]); } }
+    beamSegs.push(...pairCenters(bs, 15, 120, 30).cl);
+  }
   // 開口分配到牆種、房間、外部
   assignOpenings(openings, polys, roleOf, lab, nx, ny, px, box, U, rooms);
   if (onProgress) onProgress(1);
-  return { box, px, nx, ny, lab, rooms, footprint, walls, columns, beamLen, beamFromLayer, openings, labelsFound: labels.length };
+  return { box, px, nx, ny, lab, rooms, footprint, walls, columns, beamLen, beamFromLayer, beamSegs, openings, labelsFound: labels.length };
 }
 
 function dilate(src, nx, ny, r) {
@@ -1202,33 +1235,52 @@ function wallLengths(polys, roleOf, U) {
     }
   }
   for (const k in res) {
-    const thk = res[k].thk, segs = segsOf[k].segs, dMin = thk * 0.7, dMax = thk * 1.3;
-    segs.sort((a, b) => a[5] - b[5]);
-    let tot = 0;
-    for (let ai = 0; ai < segs.length; ai++) {
-      const a = segs[ai], L = a[4];
-      if (L <= thk * 1.3) continue; // 牆頭
-      const ux = (a[2] - a[0]) / L, uy = (a[3] - a[1]) / L, iv = [];
-      for (let ci = 0; ci < segs.length; ci++) {
-        const c = segs[ci];
-        if (c[5] > a[7] + dMax) break;
-        if (ci === ai || c[7] < a[5] - dMax || c[6] > a[8] + dMax || c[8] < a[6] - dMax) continue;
-        const cx = c[2] - c[0], cy = c[3] - c[1];
-        if (Math.abs(ux * cy - uy * cx) / c[4] > 0.03) continue; // 不平行
-        const d = Math.abs((c[0] - a[0]) * uy - (c[1] - a[1]) * ux);
-        if (d < dMin || d > dMax) continue;
-        let t0 = (c[0] - a[0]) * ux + (c[1] - a[1]) * uy, t1 = (c[2] - a[0]) * ux + (c[3] - a[1]) * uy;
-        if (t0 > t1) { const tt = t0; t0 = t1; t1 = tt; }
-        t0 = Math.max(0, t0); t1 = Math.min(L, t1);
-        if (t1 > t0) iv.push([t0, t1]);
-      }
-      iv.sort((x, y) => x[0] - y[0]);
-      let e = -1;
-      for (const [s, t] of iv) { if (t <= e) continue; tot += t - Math.max(s, e); e = t; }
-    }
-    res[k].len = tot / 2 / 100; res[k].layers = [...res[k].layers];
+    const thk = res[k].thk, pc = pairCenters(segsOf[k].segs, thk * 0.7, thk * 1.3, thk * 1.3);
+    res[k].len = pc.tot / 2 / 100; res[k].layers = [...res[k].layers]; res[k].segs = pc.cl;
   }
   return Object.values(res);
+}
+
+/* 兩條平行線(間距 dMin~dMax)配成一組 → 重疊總長(兩邊各算一次)與中心線 [x0,y0,x1,y1,間距](cm) */
+function pairCenters(segs, dMin, dMax, minLen) {
+  segs.sort((a, b) => a[5] - b[5]);
+  let tot = 0; const cl = [];
+  for (let ai = 0; ai < segs.length; ai++) {
+    const a = segs[ai], L = a[4];
+    if (L <= minLen) continue; // 牆頭
+    const ux = (a[2] - a[0]) / L, uy = (a[3] - a[1]) / L, iv = [];
+    const sg = ux > 1e-9 || (Math.abs(ux) <= 1e-9 && uy > 0) ? 1 : -1; // 統一方向,兩條邊線只有一條會輸出中心線
+    for (let ci = 0; ci < segs.length; ci++) {
+      const c = segs[ci];
+      if (c[5] > a[7] + dMax) break;
+      if (ci === ai || c[7] < a[5] - dMax || c[6] > a[8] + dMax || c[8] < a[6] - dMax) continue;
+      const cx = c[2] - c[0], cy = c[3] - c[1];
+      if (Math.abs(ux * cy - uy * cx) / c[4] > 0.03) continue; // 不平行
+      const sd = (c[0] - a[0]) * uy - (c[1] - a[1]) * ux, d = Math.abs(sd);
+      if (d < dMin || d > dMax) continue;
+      let t0 = (c[0] - a[0]) * ux + (c[1] - a[1]) * uy, t1 = (c[2] - a[0]) * ux + (c[3] - a[1]) * uy;
+      if (t0 > t1) { const tt = t0; t0 = t1; t1 = tt; }
+      t0 = Math.max(0, t0); t1 = Math.min(L, t1);
+      if (t1 > t0) iv.push([t0, t1, sd]);
+    }
+    iv.sort((x, y) => x[0] - y[0]);
+    let e = -1;
+    for (const [s, t] of iv) { if (t <= e) continue; tot += t - Math.max(s, e); e = t; }
+    // 中心線:只取在左側的配對,避免同一道牆畫兩次
+    e = -1; let cur = null;
+    for (const [s, t, sd] of iv) {
+      if (sd * sg <= 0 || t <= e) continue;
+      if (cur && s <= cur[1] + 1 && Math.abs(sd - cur[2]) < 2) { cur[1] = Math.max(cur[1], t); e = cur[1]; continue; }
+      if (cur) cl.push(cur); cur = [Math.max(s, e), t, sd]; e = t;
+    }
+    if (cur) cl.push(cur);
+    for (let i = cl.length - 1; i >= 0 && Array.isArray(cl[i]) && cl[i].length === 3; i--) {
+      const [s, t, sd] = cl[i]; if (t - s < 5) { cl.splice(i, 1); continue; }
+      const ox = uy * sd / 2, oy = -ux * sd / 2;
+      cl[i] = [a[0] + ux * s + ox, a[1] + uy * s + oy, a[0] + ux * t + ox, a[1] + uy * t + oy, Math.abs(sd)];
+    }
+  }
+  return { tot, cl };
 }
 
 function polyArea(q) { let A = 0; for (let i = 0; i + 3 < q.length; i += 2) A += q[i] * q[i + 3] - q[i + 2] * q[i + 1]; const n = q.length; if (q[0] !== q[n - 2] || q[1] !== q[n - 1]) A += q[n - 2] * q[1] - q[0] * q[n - 1]; return Math.abs(A) / 2; }
@@ -1813,7 +1865,53 @@ function elevationItems(E, params, opt) {
   return items;
 }
 
-const api = { EROLES, guessElevRole, materialName, analyzeElevation, elevationItems, findPlanTitles, planBoxNearTitle, floorRepeat, detectUnit, mergedType, parseDXF, flattenDXF, guessRole, ROLES, ROOM_TYPES, roomTypeOf, isRoomLabel, defaultFinishes, defaultParams, analyzeRegion, computeQuantities, buildXLSX, decodeBytes, cleanMText, tileArea };
+/* ------------------------------------------------------------------ */
+/* 10. 3D 用的樓層幾何(公尺,圖面原座標)                                 */
+/* ------------------------------------------------------------------ */
+const WALL_CODE = { wall_rc: 'rc', wall_brick: 'brick', wall_block: 'block', wall_light: 'light' };
+function floorGeom(A, params) {
+  const U = params.unitToCm, r2 = v => Math.round(v * 100) / 100;
+  const walls = [];
+  for (const w of A.walls || []) for (const g of w.segs || []) walls.push([r2(g[0] / 100), r2(g[1] / 100), r2(g[2] / 100), r2(g[3] / 100), r2(w.thk / 100), WALL_CODE[w.role] || 'rc']);
+  const cols = (A.columns || []).map(c => [r2(c.cx * U / 100), r2(c.cy * U / 100), r2(c.w / 100), r2(c.h / 100)]);
+  const beams = (A.beamSegs || []).map(g => [r2(g[0] / 100), r2(g[1] / 100), r2(g[2] / 100), r2(g[3] / 100), r2(g[4] / 100)]);
+  const slab = ((A.footprint && A.footprint.outline) || []).map(lp => { const o = []; for (const q of lp) o.push(r2(q[0] * U / 100), r2(q[1] * U / 100)); return o; });
+  return { walls, cols, beams, slab };
+}
+/* 兩組柱位對齊:找平移量 d 使 B + d ≈ A(柱網投票),回傳 {dx, dy, n 對到幾支} */
+function alignByColumns(A, B, guess, tol) {
+  tol = tol || 0.3; if (!A.length || !B.length) return null;
+  const votes = new Map(), q = tol;
+  for (const a of A) for (const b of B) {
+    const dx = a[0] - b[0], dy = a[1] - b[1], k = Math.round(dx / q) + ',' + Math.round(dy / q);
+    const v = votes.get(k); if (v) { v.n++; v.sx += dx; v.sy += dy; } else votes.set(k, { n: 1, sx: dx, sy: dy });
+  }
+  // A 的柱位放進格網,查「平移後有沒有對到」只看附近格子
+  const cell = tol * 2, grid = new Map(), key = (x, y) => Math.floor(x / cell) + ',' + Math.floor(y / cell);
+  for (const a of A) { const k = key(a[0], a[1]); (grid.get(k) || grid.set(k, []).get(k)).push(a); }
+  const hit = (x, y) => { const gx = Math.floor(x / cell), gy = Math.floor(y / cell); for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) { const L = grid.get((gx + i) + ',' + (gy + j)); if (L && L.some(a => Math.abs(a[0] - x) < tol && Math.abs(a[1] - y) < tol)) return true; } return false; };
+  // 只細算票數最多的前 30 個候選
+  const cands = [...votes.values()].sort((a, b) => b.n - a.n).slice(0, 30);
+  let best = null, bs = -Infinity;
+  for (const v of cands) {
+    const dx = v.sx / v.n, dy = v.sy / v.n;
+    let n = 0; for (const b of B) if (hit(b[0] + dx, b[1] + dy)) n++;
+    const sc = n - (guess ? Math.hypot(dx - guess[0], dy - guess[1]) * 1e-3 : 0);
+    if (sc > bs) { bs = sc; best = { dx, dy, n }; }
+  }
+  return best;
+}
+function shiftGeom(g, dx, dy) {
+  const r2 = v => Math.round(v * 100) / 100;
+  return {
+    walls: g.walls.map(w => [r2(w[0] + dx), r2(w[1] + dy), r2(w[2] + dx), r2(w[3] + dy), w[4], w[5]]),
+    cols: g.cols.map(c => [r2(c[0] + dx), r2(c[1] + dy), c[2], c[3]]),
+    beams: g.beams.map(b => [r2(b[0] + dx), r2(b[1] + dy), r2(b[2] + dx), r2(b[3] + dy), b[4]]),
+    slab: g.slab.map(lp => lp.map((v, i) => r2(v + (i % 2 ? dy : dx)))),
+  };
+}
+
+const api = { EROLES, guessElevRole, materialName, analyzeElevation, elevationItems, findPlanTitles, planBoxNearTitle, floorRepeat, detectUnit, mergedType, parseDXF, flattenDXF, guessRole, ROLES, ROOM_TYPES, roomTypeOf, isRoomLabel, defaultFinishes, defaultParams, analyzeRegion, computeQuantities, buildXLSX, decodeBytes, cleanMText, tileArea, floorGeom, alignByColumns, shiftGeom };
 if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.QE = api;
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
@@ -2291,6 +2389,7 @@ function addFloor() {
     params: { floorH: S.params.floorH, slabT: S.params.slabT, ceilH: S.params.ceilH },
     items: S.Q.items.map(it => ({ trade: it.trade, item: it.item, unit: it.unit, qty: it.qty, loss: it.loss, total: it.total })),
     rooms: S.Q.roomDetail.map(r => ({ name: r.name, type: r.type, area: r.area, perim: r.perim, floor: r.floor, wallTile: r.wallTile, wallPaint: r.wallPaint, ceilPaint: r.ceilPaint })),
+    geom: QE.floorGeom(S.A, S.params),
   });
   saveLocal(); toast(`已加入:${name} × ${S.params.repeat}`); renderTab();
 }
@@ -2325,12 +2424,13 @@ function renderProject() {
   }
   h += '<h3 style="font-size:14px;margin:18px 0 8px">全案數量</h3>';
   h += itemsTable(projectTotals().map(it => ({ ...it, loss: it.loss })), 1);
-  h += `<div class="actions"><button class="btn primary" id="xlsBtn" type="button">匯出 Excel</button><button class="btn" id="copyBtn" type="button">複製總表</button><button class="btn" id="clearBtn" type="button">清空專案</button></div>`;
+  h += `<div class="actions"><button class="btn primary" id="xlsBtn" type="button">匯出 Excel</button><button class="btn" id="copyBtn" type="button">複製總表</button><button class="btn" id="v3dBtn" type="button" title="把各樓層的柱、牆、梁、樓板疊成 3D,照施工順序一層一層蓋起來">3D 施工動畫</button><button class="btn" id="clearBtn" type="button">清空專案</button></div>`;
   el.innerHTML = h;
   el.querySelectorAll('[data-rep]').forEach(c => c.addEventListener('change', e => { fl[+e.target.dataset.rep].repeat = Math.max(1, parseInt(e.target.value) || 1); saveLocal(); renderProject(); }));
   el.querySelectorAll('[data-del]').forEach(c => c.addEventListener('click', e => { fl.splice(+e.target.dataset.del, 1); saveLocal(); renderTab(); }));
   el.querySelectorAll('[data-edel]').forEach(c => c.addEventListener('click', e => { ev.splice(+e.target.dataset.edel, 1); saveLocal(); renderTab(); }));
   $('#xlsBtn').addEventListener('click', exportXLSX);
+  $('#v3dBtn').addEventListener('click', open3D);
   $('#copyBtn').addEventListener('click', async () => { const rows = [['工種', '項目', '單位', '數量', '損耗%', '含損耗']].concat(projectTotals().map(t => [t.trade, t.item, t.unit, t.qty.toFixed(2), t.loss, t.total.toFixed(2)])); try { await navigator.clipboard.writeText(rows.map(r => r.join('\t')).join('\n')); toast('已複製,可直接貼到 Excel'); } catch (e) { toast('無法使用剪貼簿'); } });
   $('#clearBtn').addEventListener('click', () => { if (el.dataset.confirm !== '1') { el.dataset.confirm = '1'; $('#clearBtn').textContent = '再按一次確認清空'; return; } S.project.floors = []; S.project.elevs = []; el.dataset.confirm = ''; saveLocal(); renderTab(); });
 }
@@ -2638,6 +2738,248 @@ function demoDXF() {
   text('A4-文字', '示範層平面圖', 530, -220, 40);
   g(0, 'ENDSEC'); g(0, 'EOF');
   return out.join('\n');
+}
+
+/* ---------------- 3D 施工動畫 ---------------- */
+const V3 = { open: false };
+const V3_STAGES = [['beam', '梁'], ['slab', '樓板'], ['col', '柱'], ['wall', '牆']];
+const V3_COLOR = { col: '#5b6b7d', rc: '#b9bcb6', brick: '#c27a52', block: '#d9cfb8', light: '#e6e2d6', beam: '#8a9099', slab: '#cfd3cf' };
+const V3_CONC = { beam: /^混凝土 — 梁$/, slab: /^混凝土 — 樓板$/, col: /^混凝土 — 柱$/, wall: /^混凝土 — RC牆$|連續壁.*混凝土/ };
+function v3cn(s) { if (/^\d+$/.test(s)) return +s; const C = { 一: 1, 二: 2, 兩: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 }; let v = 0, cur = 0; for (const ch of s) { const d = C[ch]; if (d === undefined) return NaN; if (d === 10) { v += (cur || 1) * 10; cur = 0; } else cur = d; } return v + cur; }
+// 樓層名稱 → 由下往上的順序(認不得回傳 NaN)
+function v3Level(name) {
+  const s = String(name).replace(/[⚠\s]/g, ''); let m;
+  if (/屋突|屋頂突出/.test(s)) { m = /(?:屋突|屋頂突出物?)([\d一二三四五六七八九十]+)/.exec(s); return 1000 + (m ? v3cn(m[1]) : 0); }
+  if (/^PF|^RF|屋頂/i.test(s)) return 2000;
+  if ((m = /^R(\d+)F?/i.exec(s))) return 1000 + +m[1];
+  if ((m = /^B(\d+)/i.exec(s)) || (m = /地下([\d一二三四五六七八九十]+)/.exec(s))) return -v3cn(m[1]);
+  if ((m = /^(\d+)MF/i.exec(s)) || (m = /([\d一二三四五六七八九十]+)夾層/.exec(s))) return v3cn(m[1]) + 0.5;
+  if ((m = /^([\d一二三四五六七八九十]+)(?:[~至\-到][\d一二三四五六七八九十]+)?[層樓F]/i.exec(s))) return v3cn(m[1]);
+  return NaN;
+}
+function v3BBox(g) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const P = (x, y) => { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; };
+  for (const w of g.walls) { P(w[0], w[1]); P(w[2], w[3]); } for (const c of g.cols) P(c[0], c[1]); for (const b of g.beams) { P(b[0], b[1]); P(b[2], b[3]); }
+  for (const lp of g.slab) for (let i = 0; i + 1 < lp.length; i += 2) P(lp[i], lp[i + 1]);
+  return x0 <= x1 ? [x0, y0, x1, y1] : null;
+}
+// 整理樓層:排序、各層位置對齊(靠柱位)、展開相同樓層、算高程
+function v3Plan(floors) {
+  const src = floors.map((f, i) => ({ f, i, lv: v3Level(f.name) })).filter(o => o.f.geom && v3BBox(o.f.geom));
+  if (src.some(o => isNaN(o.lv))) src.sort((a, b) => a.i - b.i); else src.sort((a, b) => a.lv - b.lv || a.i - b.i);
+  const warn = [], out = [];
+  for (let k = 0; k < src.length; k++) {
+    const g = src[k].f.geom, bb = v3BBox(g), c = [(bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2];
+    let d = null;
+    if (k === 0) d = [-c[0], -c[1]];
+    else {
+      for (let j = k - 1; j >= 0 && !d; j--) {
+        const pb = out[j].bb, guess = [(pb[0] + pb[2]) / 2 - c[0], (pb[1] + pb[3]) / 2 - c[1]];
+        const al = QE.alignByColumns(out[j].g.cols, g.cols, guess);
+        if (al && al.n >= Math.min(3, g.cols.length) && al.n >= 2) d = [al.dx, al.dy];
+      }
+      if (!d) { const pb = out[k - 1].bb; d = [(pb[0] + pb[2]) / 2 - c[0], (pb[1] + pb[3]) / 2 - c[1]]; warn.push(src[k].f.name.replace(/\s*⚠/, '')); }
+    }
+    const gg = QE.shiftGeom(g, d[0], d[1]);
+    out.push({ f: src[k].f, lv: src[k].lv, g: gg, bb: v3BBox(gg) });
+  }
+  const levels = []; let z = 0;
+  for (const o of out) {
+    const rep = Math.max(1, o.f.repeat || 1);
+    for (let r = 0; r < rep; r++) {
+      const H = (o.f.params.floorH || 320) / 100, T = (o.f.params.slabT || 15) / 100;
+      levels.push({ name: o.f.name.replace(/\s*⚠/, '') + (rep > 1 ? `(${r + 1}/${rep})` : ''), f: o.f, g: o.g, z, H, T, base: o.lv < 0 });
+      z += H;
+    }
+  }
+  const gi = levels.findIndex(l => !l.base); const z0 = gi > 0 ? levels[gi].z : 0;
+  for (const l of levels) l.z -= z0;
+  return { levels, warn, skipped: floors.filter(f => !f.geom).map(f => f.name) };
+}
+function v3Geo(THREE, boxes) {
+  // boxes: [ax, ay, bx, by, 寬, z0, z1](牆、梁) 或 {c:[cx,cy,寬,深], z0, z1}(柱)
+  const pos = [];
+  const quad = (a, b, c, d) => pos.push(...a, ...b, ...c, ...a, ...c, ...d);
+  const box = (k, z0, z1) => { // k: 4 個平面角點 [x,y]
+    const V = (p, h) => [p[0], h, -p[1]];
+    const lo = k.map(p => V(p, z0)), hi = k.map(p => V(p, z1));
+    quad(lo[0], lo[1], lo[2], lo[3]); quad(hi[0], hi[1], hi[2], hi[3]);
+    for (let i = 0; i < 4; i++) { const j = (i + 1) % 4; quad(lo[i], lo[j], hi[j], hi[i]); }
+  };
+  for (const b of boxes) {
+    if (b.c) { const [cx, cy, w, h] = b.c; box([[cx - w / 2, cy - h / 2], [cx + w / 2, cy - h / 2], [cx + w / 2, cy + h / 2], [cx - w / 2, cy + h / 2]], b.z0, b.z1); continue; }
+    const [ax, ay, bx, by, w, z0, z1] = b; const L = Math.hypot(bx - ax, by - ay); if (L < 0.01) continue;
+    const nx = -(by - ay) / L * w / 2, ny = (bx - ax) / L * w / 2;
+    box([[ax + nx, ay + ny], [bx + nx, by + ny], [bx - nx, by - ny], [ax - nx, ay - ny]], z0, z1);
+  }
+  if (!pos.length) return null;
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.computeVertexNormals();
+  return geo;
+}
+function v3SlabGeo(THREE, loops, T) {
+  const pos = [];
+  for (const lp of loops) {
+    if (lp.length < 6) continue;
+    const sh = new THREE.Shape(); sh.moveTo(lp[0], lp[1]); for (let i = 2; i + 1 < lp.length; i += 2) sh.lineTo(lp[i], lp[i + 1]);
+    const g = new THREE.ExtrudeGeometry(sh, { depth: T, bevelEnabled: false }); g.rotateX(-Math.PI / 2);
+    const g2 = g.index ? g.toNonIndexed() : g; pos.push(...g2.attributes.position.array); g.dispose(); if (g2 !== g) g2.dispose();
+  }
+  if (!pos.length) return null;
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.computeVertexNormals();
+  return geo;
+}
+async function open3D() {
+  if (V3.open) return;
+  const plan = v3Plan(S.project.floors);
+  if (!plan.levels.length) { toast(S.project.floors.length ? '這些樓層沒有位置資料(舊版加入的),請重新「計算這一層」再加入專案總表' : '專案總表還沒有樓層'); return; }
+  if (!V3.THREE) {
+    toast('載入 3D 元件中…');
+    try { V3.THREE = await import('https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js'); }
+    catch (e) { toast('3D 元件載入失敗,請確認有連上網路'); return; }
+  }
+  if (V3.open) return;
+  V3.open = true;
+  try { v3Build(plan); } catch (e) { console.error(e); V3.open = false; cancelAnimationFrame(V3.raf); const o = $('#v3d'); if (o) o.remove(); document.body.style.overflow = ''; toast('3D 畫面開不起來:' + (e.message || e)); }
+}
+function v3Build(plan) {
+  const THREE = V3.THREE;
+  const ov = document.createElement('div'); ov.className = 'v3d'; ov.id = 'v3d';
+  ov.innerHTML = `<div class="v3d-top"><b>3D 施工動畫</b><span class="small muted" id="v3Info"></span><span class="sp"></span>
+    <label class="small"><input type="checkbox" id="v3Ghost" checked> 顯示還沒蓋的部分</label>
+    <button class="btn small" id="v3Reset" type="button">重設視角</button><button class="btn small" id="v3Close" type="button">關閉</button></div>
+    <div class="v3d-main"><div class="v3d-cv"><canvas id="v3Cv"></canvas><div class="v3d-hint small">拖曳旋轉 · 右鍵或 Shift 拖曳平移 · 滾輪/兩指縮放</div></div>
+    <aside class="v3d-side"><div class="v3d-now" id="v3Now"></div><div class="v3d-conc" id="v3Conc"></div>
+    <div class="v3d-leg">${[['col', '柱'], ['rc', 'RC 牆'], ['brick', '磚牆'], ['block', '白磚/輕隔間'], ['beam', '梁'], ['slab', '樓板']].map(([k, n]) => `<span><i style="background:${V3_COLOR[k]}"></i>${n}</span>`).join('')}<span><i style="background:var(--brand-orange)"></i>施工中</span></div>
+    <div class="v3d-floors" id="v3Floors"></div></aside></div>
+    <div class="v3d-bar"><button class="btn small primary" id="v3Play" type="button">▶ 播放</button>
+    <input type="range" id="v3T" min="0" step="0.01" value="0" aria-label="施工進度"><span class="num small" id="v3Lbl"></span>
+    <select id="v3Spd" aria-label="速度"><option value="0.6">慢</option><option value="1.5" selected>中</option><option value="4">快</option></select></div>`;
+  document.body.appendChild(ov); document.body.style.overflow = 'hidden';
+  const info = [`共 ${plan.levels.length} 層`];
+  if (plan.warn.length) info.push('⚠ 柱位對不上、改用外框置中:' + plan.warn.join('、'));
+  if (plan.skipped.length) info.push('沒有位置資料(請重算再加入):' + plan.skipped.join('、'));
+  $('#v3Info').textContent = info.join(' ｜ ');
+
+  const cv = $('#v3Cv');
+  const renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true }); renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+  const scene = new THREE.Scene(); scene.background = new THREE.Color('#f3f1ec');
+  const camera = new THREE.PerspectiveCamera(40, 1, 0.5, 5000);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8478, 1.6));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.6); sun.position.set(0.6, 1, 0.35); scene.add(sun);
+  const M = {}; for (const k in V3_COLOR) M[k] = new THREE.MeshLambertMaterial({ color: V3_COLOR[k], side: THREE.DoubleSide });
+  const ghostM = new THREE.MeshBasicMaterial({ color: '#7f8c99', transparent: true, opacity: 0.07, depthWrite: false, side: THREE.DoubleSide });
+  const hotM = new THREE.MeshLambertMaterial({ color: '#f0a55e', side: THREE.DoubleSide });
+  const edgeM = new THREE.LineBasicMaterial({ color: '#2d3640', transparent: true, opacity: 0.28 });
+  // 每層 × 每個工序一步:梁 → 樓板 → 柱 → 牆(柱牆從本層樓板往上蓋到上一層樓板底)
+  const steps = []; let zMin = Infinity, zMax = -Infinity;
+  const bD = (S.params.beamD || 70) / 100;
+  plan.levels.forEach((L, li) => {
+    const z = L.z, g = L.g;
+    const nextT = plan.levels[li + 1] ? plan.levels[li + 1].T : 0;
+    const parts = {};
+    if (g.beams.length) parts.beam = [{ geo: v3Geo(THREE, g.beams.map(b => [b[0], b[1], b[2], b[3], b[4], 0, bD])), mat: M.beam, y: z - bD }];
+    if (g.slab.length) parts.slab = [{ geo: v3SlabGeo(THREE, g.slab, L.T), mat: M.slab, y: z - L.T }];
+    const hw = Math.max(0.3, L.H - nextT);
+    if (g.cols.length) parts.col = [{ geo: v3Geo(THREE, g.cols.map(c => ({ c, z0: 0, z1: hw }))), mat: M.col, y: z }];
+    if (g.walls.length) {
+      const byK = {}; for (const w of g.walls) (byK[w[5]] = byK[w[5]] || []).push(w);
+      parts.wall = Object.keys(byK).map(k => ({ geo: v3Geo(THREE, byK[k].map(w => [w[0], w[1], w[2], w[3], w[4], 0, hw])), mat: M[k] || M.rc, y: z }));
+    }
+    for (const [key, label] of V3_STAGES) {
+      const ps = (parts[key] || []).filter(p => p.geo); if (!ps.length) continue;
+      const conc = L.f.items.filter(i => V3_CONC[key].test(i.item)).reduce((s, i) => s + i.qty, 0);
+      const st = { li, key, label, name: L.name, conc, meshes: [] }; steps.push(st);
+      for (const p of ps) {
+        const grp = new THREE.Group(); grp.position.y = p.y;
+        const mesh = new THREE.Mesh(p.geo, p.mat); const ed = new THREE.LineSegments(new THREE.EdgesGeometry(p.geo, 30), edgeM);
+        grp.add(mesh); grp.add(ed); scene.add(grp);
+        st.meshes.push({ grp, mesh, ed, mat: p.mat });
+      }
+    }
+    zMin = Math.min(zMin, z - 1); zMax = Math.max(zMax, z + L.H);
+  });
+  // 地面
+  let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
+  for (const L of plan.levels) { const b = v3BBox(L.g); if (!b) continue; bx0 = Math.min(bx0, b[0]); by0 = Math.min(by0, b[1]); bx1 = Math.max(bx1, b[2]); by1 = Math.max(by1, b[3]); }
+  const span = Math.max(bx1 - bx0, by1 - by0, zMax - zMin, 10), gs = Math.ceil(span * 2.4 / 5) * 5;
+  const grid = new THREE.GridHelper(gs, gs / 5, 0xb9b4a8, 0xdcd8cf); grid.position.set((bx0 + bx1) / 2, 0.001, -(by0 + by1) / 2); scene.add(grid);
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(gs, gs), new THREE.MeshBasicMaterial({ color: '#8f8a80', transparent: true, opacity: 0.12, depthWrite: false, side: THREE.DoubleSide }));
+  ground.rotation.x = -Math.PI / 2; ground.position.copy(grid.position); scene.add(ground);
+  // 相機(自己寫的環繞控制)
+  const C = {};
+  const resetCam = () => Object.assign(C, { th: -0.75, ph: 1.08, r: Math.max(30, span * 2.1), tx: (bx0 + bx1) / 2, ty: (zMin + zMax) / 2, tz: -(by0 + by1) / 2 });
+  resetCam();
+  const applyCam = () => { camera.position.set(C.tx + C.r * Math.sin(C.ph) * Math.sin(C.th), C.ty + C.r * Math.cos(C.ph), C.tz + C.r * Math.sin(C.ph) * Math.cos(C.th)); camera.lookAt(C.tx, C.ty, C.tz); };
+  const pan = (dx, dy) => { const k = C.r * 0.0016, rx = Math.cos(C.th), rz = -Math.sin(C.th); C.tx -= dx * k * rx; C.tz -= dx * k * rz; C.ty += dy * k; };
+  const pts = new Map(); let pinch = null;
+  cv.addEventListener('contextmenu', e => e.preventDefault());
+  cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId); pts.set(e.pointerId, { x: e.clientX, y: e.clientY, b: e.button, sh: e.shiftKey }); pinch = null; });
+  cv.addEventListener('pointermove', e => {
+    const p = pts.get(e.pointerId); if (!p) return;
+    const dx = e.clientX - p.x, dy = e.clientY - p.y; p.x = e.clientX; p.y = e.clientY;
+    if (pts.size >= 2) {
+      const [a, b] = [...pts.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y) || 1, m = [(a.x + b.x) / 2, (a.y + b.y) / 2];
+      if (pinch) { C.r = Math.min(span * 8, Math.max(2, C.r * pinch.d / d)); pan(m[0] - pinch.m[0], m[1] - pinch.m[1]); }
+      pinch = { d, m }; return;
+    }
+    if (p.b === 2 || p.sh) pan(dx, dy); else { C.th -= dx * 0.006; C.ph = Math.min(1.55, Math.max(0.12, C.ph - dy * 0.006)); }
+  });
+  const up = e => { pts.delete(e.pointerId); pinch = null; };
+  cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+  cv.addEventListener('wheel', e => { e.preventDefault(); C.r = Math.min(span * 8, Math.max(2, C.r * Math.exp(e.deltaY * 0.0012))); }, { passive: false });
+  const fit = () => { const w = cv.parentElement.clientWidth, h = cv.parentElement.clientHeight; if (!w || !h) return; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); };
+  const ro = new ResizeObserver(fit); ro.observe(cv.parentElement); fit();
+  // 進度
+  const N = steps.length, rng = $('#v3T'); rng.max = N;
+  const concTot = steps.reduce((s, st) => s + st.conc, 0);
+  const lvSteps = plan.levels.map((L, li) => steps.filter(s => s.li === li));
+  $('#v3Floors').innerHTML = plan.levels.map((L, li) => `<button type="button" class="v3d-fl" data-li="${li}" title="跳到 ${esc(L.name)} 完成"><span>${esc(L.name)}</span><i><b id="v3fb${li}"></b></i></button>`).reverse().join('');
+  $('#v3Floors').querySelectorAll('[data-li]').forEach(b => b.addEventListener('click', () => { const s = lvSteps[+b.dataset.li]; if (s.length) { V3.t = steps.indexOf(s[s.length - 1]) + 1; V3.play = false; } }));
+  const ease = k => 1 - Math.pow(1 - k, 3);
+  let lastSync = -1;
+  const sync = () => {
+    const t = V3.t, ghost = $('#v3Ghost').checked;
+    let done = 0;
+    steps.forEach((st, i) => {
+      const k = t - i;
+      for (const m of st.meshes) {
+        if (k >= 1) { m.grp.visible = true; m.mesh.material = m.mat; m.ed.visible = true; m.grp.scale.y = 1; }
+        else if (k > 0) { m.grp.visible = true; m.mesh.material = hotM; m.ed.visible = false; m.grp.scale.y = Math.max(0.001, ease(k)); }
+        else { m.grp.visible = ghost; m.mesh.material = ghostM; m.ed.visible = false; m.grp.scale.y = 1; }
+      }
+      done += st.conc * Math.min(1, Math.max(0, k));
+    });
+    const cur = steps[Math.min(N - 1, Math.floor(t))];
+    $('#v3Now').innerHTML = t >= N ? '<span class="small muted">進度</span><b>全棟結構完成</b>' : `<span class="small muted">施工中 · 第 ${Math.floor(t) + 1} / ${N} 步</span><b>${esc(cur.name)}　${cur.label}</b>`;
+    $('#v3Conc').innerHTML = `<span class="small muted">已灌混凝土</span><div><b class="num">${fmt(done, 1)}</b><span class="small muted"> / ${fmt(concTot, 1)} m³</span></div><i><b style="width:${concTot ? done / concTot * 100 : 0}%"></b></i>`;
+    lvSteps.forEach((ss, li) => { const el = $('#v3fb' + li); if (!el || !ss.length) return; const a = steps.indexOf(ss[0]); el.style.width = Math.min(100, Math.max(0, (t - a) / ss.length * 100)) + '%'; });
+    rng.value = t; $('#v3Lbl').textContent = Math.round(t / N * 100) + '%';
+    $('#v3Play').textContent = V3.play ? '⏸ 暫停' : (t >= N ? '↺ 重播' : '▶ 播放');
+  };
+  V3.t = 0; V3.play = true;
+  rng.addEventListener('input', () => { V3.t = parseFloat(rng.value); V3.play = false; });
+  $('#v3Play').addEventListener('click', () => { if (V3.t >= N) V3.t = 0; V3.play = !V3.play; lastSync = -1; });
+  $('#v3Ghost').addEventListener('change', () => { lastSync = -1; });
+  $('#v3Reset').addEventListener('click', resetCam);
+  const onKey = e => { if (e.key === 'Escape') close(); else if (e.key === ' ' && !/BUTTON|INPUT|SELECT/.test(e.target.tagName)) { e.preventDefault(); $('#v3Play').click(); } };
+  const close = () => {
+    V3.open = false; cancelAnimationFrame(V3.raf); ro.disconnect(); document.removeEventListener('keydown', onKey);
+    scene.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material && o.material !== ghostM && o.material !== hotM && o.material !== edgeM && !Object.values(M).includes(o.material)) o.material.dispose(); });
+    [ghostM, hotM, edgeM, ...Object.values(M)].forEach(m => m.dispose()); renderer.dispose(); ov.remove(); document.body.style.overflow = '';
+  };
+  document.addEventListener('keydown', onKey);
+  $('#v3Close').addEventListener('click', close);
+  let prev = performance.now();
+  const loop = now => {
+    const dt = Math.min(0.5, (now - prev) / 1000); prev = now;
+    if (V3.play) { V3.t = Math.min(N, V3.t + dt * parseFloat($('#v3Spd').value)); if (V3.t >= N) V3.play = false; }
+    if (V3.t !== lastSync || V3.play) { sync(); lastSync = V3.t; }
+    applyCam(); renderer.render(scene, camera);
+    V3.raf = requestAnimationFrame(loop);
+  };
+  V3.raf = requestAnimationFrame(loop);
 }
 
 /* ---------------- 啟動 ---------------- */
