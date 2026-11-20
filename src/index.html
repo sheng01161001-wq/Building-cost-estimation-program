@@ -193,7 +193,7 @@ details summary { cursor: pointer; color: var(--accent); font-size: 13px; }
     <button class="btn small" id="saveProj" type="button" title="把本案的樓層、立面、圖層對應與所有設定存成一個檔,可傳給同事">儲存專案檔</button>
     <label class="btn small" for="openProj" title="開啟之前儲存的專案檔">開啟專案檔</label><input type="file" id="openProj" accept=".json" hidden>
     <button class="btn small primary" id="abTop" type="button" title="放進建築平立剖面圖＋結構平面圖,自動算整棟">整棟自動估算</button>
-    <button class="btn small primary" id="v3dTop" type="button" title="把專案各樓層疊成 3D,照施工順序一層一層蓋起來;還沒開專案時會先請你選專案檔">3D 施工動畫</button><input type="file" id="open3DProj" accept=".json" hidden>
+    <button class="btn small primary" id="v3dTop" type="button" title="把專案各樓層疊成 3D,照施工順序一層一層蓋起來;還沒有樓層時,會用左邊放的圖(或請你選圖檔／專案檔)自動算整棟">3D 施工動畫</button><input type="file" id="open3DProj" accept=".json,.dxf,.dwg" hidden>
     <button class="btn small" id="newProj" type="button">新案</button>
     <button class="btn small" id="helpTop" type="button">使用說明</button></div>
 </header>
@@ -903,7 +903,12 @@ $('#openProj').addEventListener('change', e => { const f = e.target.files[0]; e.
 $('#v3dTop').addEventListener('click', () => open3D());
 $('#abTop').addEventListener('click', openAuto);
 $('#helpTop').addEventListener('click', openHelp);
-$('#open3DProj').addEventListener('change', async e => { const f = e.target.files[0]; e.target.value = ''; if (f && await openProjectFile(f)) open3D(true); });
+$('#open3DProj').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  if (/\.json$/i.test(f.name)) { if (await openProjectFile(f)) open3D(true); return; }
+  // 選的是圖檔:當建築平立剖面圖,開整棟自動
+  openAuto(); try { const F = await abReadDXF(f, '建築圖'); AB.FA = F; AB.nameA = f.name; if ($('#abNA')) $('#abNA').textContent = f.name; abList(); } catch (er) { abMsg('讀取失敗:' + esc(er.message), true); }
+});
 $('#newProj').addEventListener('click', () => {
   const b = $('#newProj');
   if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = '確定清空?'; setTimeout(() => { b.dataset.confirm = ''; b.textContent = '新案'; }, 4000); return; }
@@ -1151,7 +1156,13 @@ function abList() {
   if (!AB.FA) return;
   AB.plan = QE.planBuilding(AB.FA, AB.FS, abRoles(AB.FA));
   const B = AB.plan;
-  if (!B.floors.length) { $('#abTable').innerHTML = ''; abMsg('建築圖裡找不到「○○層平面圖」這種圖名,沒辦法自動分層。請確認放的是平面圖的 DXF,或改用左邊「選擇一層平面圖」一層一層算。', true); $('#abRun').disabled = true; return; }
+  if (!B.floors.length) {
+    $('#abTable').innerHTML = ''; $('#abRun').disabled = true;
+    abMsg('圖上找不到「○○層平面圖」這種圖名,沒辦法自動分層。<br>可以改成<b>一層一層做</b>:關掉這個視窗 → 左邊「02」框選一層 →「計算這一層」→「加入專案總表」(相同樓層數填好),每種樓層做一次,最後按「3D 施工動畫」。'
+      + (AB.FA === S.F && S.box ? '<div class="actions"><button class="btn primary" type="button" id="abOne">直接用左邊目前框選的這一層看 3D</button></div>' : ''), true);
+    const one = $('#abOne'); if (one) one.addEventListener('click', abOneFloor);
+    return;
+  }
   const secN = Object.keys(B.sec).length;
   abMsg(`找到 <b>${B.floors.length}</b> 組樓層(建築圖名 ${B.planTitles} 個${AB.FS ? `、結構圖名 ${B.structTitles} 個` : ',沒有結構圖'});剖面高程 ${secN} 個${secN ? '' : '(樓高先用預設,請在表上改)'}。請檢查下表,樓高、版厚、相同樓層數可以直接改,不要的樓層取消勾選。`);
   let h = '<div class="tablewrap"><table class="q ab-t"><thead><tr><th>算</th><th>樓層</th><th style="text-align:right">相同樓層數</th><th style="text-align:right">樓高 cm</th><th style="text-align:right">版厚 cm</th><th>建築圖</th><th>結構圖</th><th>說明</th></tr></thead><tbody>';
@@ -1201,9 +1212,16 @@ async function abRun() {
   $('#abSave').addEventListener('click', () => $('#saveProj').click());
   run.disabled = false; run.textContent = '重新計算'; run.dataset.confirm = '';
 }
+async function abOneFloor() {
+  abMsg('計算這一層…'); await tick();
+  if (!S.Q) { $('#runBtn').click(); for (let i = 0; i < 80 && !S.Q; i++) await new Promise(r => setTimeout(r, 250)); }
+  if (!S.Q) { abMsg('這一層算不出來,請先在左邊按「計算這一層」看看哪裡有問題。', true); return; }
+  addFloor(); abClose(); open3D();
+}
 function abClose() { const o = $('#abOv'); if (o) o.remove(); document.body.style.overflow = ''; }
 function openAuto() {
   if ($('#abOv')) return;
+  if (!AB.FA && S.F && !S.F.isPDF) { AB.FA = S.F; AB.FA._unit = AB.FA._unit || { unitToCm: S.unit }; AB.nameA = S.fileName; }
   const ov = document.createElement('div'); ov.className = 'ab-ov'; ov.id = 'abOv';
   ov.innerHTML = `<div class="ab-box" role="dialog" aria-label="整棟自動估算">
     <div class="ab-head"><h2>整棟自動估算</h2><button class="btn small" type="button" id="abX">關閉</button></div>
@@ -1259,6 +1277,7 @@ function openHelp() {
     <p>這是網頁程式,<b>不用安裝</b>。用 Chrome 或 Edge 打開網址就能用,圖檔只在自己電腦裡處理,不會上傳。<br>
     網址:<a href="https://sheng01161001-wq.github.io/Building-cost-estimation-program/" target="_blank" rel="noopener">sheng01161001-wq.github.io/Building-cost-estimation-program</a>(分享給同事直接傳這個網址)</p>
     <h3>方法一:整棟自動(建議)</h3>
+    <p><b>最快:</b>左邊「01 匯入圖檔」放好平面圖 DXF 後,直接按上方「<b>3D 施工動畫</b>」,會自動用這張圖算整棟;也可以按「3D 施工動畫」直接選圖檔。</p>
     <ol><li>按上方「<b>整棟自動估算</b>」。</li>
     <li>放進「建築平立剖面圖 DXF」,再放「結構平面圖 DXF」(可以不放,但柱、梁、地下室會比較不準)。</li>
     <li>程式列出各樓層、樓高、版厚、相同樓層數,檢查一下,有錯就直接改。</li>
@@ -1411,7 +1430,8 @@ async function open3D(fromPicker) {
   const plan = v3Plan(S.project.floors);
   if (!plan.levels.length) {
     // 還沒有可用的樓層:直接請使用者選專案檔(選好就自動開 3D)
-    if (!fromPicker) { toast('請選專案檔(.json),選好就會開始 3D 動畫'); $('#open3DProj').click(); return; }
+    if (!fromPicker && S.F && !S.F.isPDF) { openAuto(); return; } // 左邊已經放了圖:直接用這張圖算整棟
+    if (!fromPicker) { toast('請選平面圖 DXF 或專案檔(.json)'); $('#open3DProj').click(); return; }
     toast(S.project.floors.length ? '這個專案的樓層沒有位置資料(舊版加入的),請重新「計算這一層」再加入專案總表' : '這個專案檔裡沒有樓層'); return;
   }
   V3.open = true;
