@@ -1813,7 +1813,9 @@ function planBuilding(FA, FS, roles) {
       for (const c of cands) { const b = planBoxNearTitle(FS, c, rS, { members: ['beam', 'column', 'wall_rc'], gap: 5, wy: 60, wx: 40 }); if (!b) continue; let n = 0; for (const p of FS.polys) if (rS[FS.layerNames[p.L]].role === 'column' && p.bb[0] >= b[0] && p.bb[2] <= b[2] && p.bb[1] >= b[1] && p.bb[3] <= b[3]) n++; if (n > best) { best = n; s = c; } }
     }
     const repeat = a ? a.repeat : s ? s.repeat : 1;
-    floors.push({ lv, name: levelCode(lv, repeat), repeat, plan: a ? a.title : '', struct: s ? s.title : '', _a: a || null, _s: s || null, floorH: 0, slabT: 15, hNote: '' });
+    // 樓層名稱:照圖框內平面圖下方的圖名(三層、九至十二層、屋突一層),沒有平面圖才用結構圖名,都沒有用代號
+    const nm = a ? a.title.replace(/平面圖\s*$/, '').trim() : s ? s.title.replace(/結構平面圖.*$/, '').trim() : '';
+    floors.push({ lv, name: nm || levelCode(lv, repeat), code: levelCode(lv, repeat), repeat, plan: a ? a.title : '', struct: s ? s.title : '', _a: a || null, _s: s || null, floorH: 0, slabT: 15, hNote: '' });
   }
   // 樓高:剖面高程相減;夾層、沒標高程的平均分;最上面屋頂層只有樓板
   const known = floors.map(f => sec[f.lv]);
