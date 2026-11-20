@@ -148,6 +148,9 @@ details summary { cursor: pointer; color: var(--accent); font-size: 13px; }
 .v3d-cv canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: grab; display: block; }
 .v3d-note { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); max-width: min(560px, 90%); background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn); border-radius: 6px; padding: 10px 14px; font-size: 13px; z-index: 2; }
 .v3d-note.bad { background: #fde8e6; color: #b42318; border-color: #b42318; }
+.v3d-views { position: absolute; left: 10px; top: 10px; display: flex; gap: 4px; flex-wrap: wrap; z-index: 1; }
+.v3d-views button { background: rgba(255,255,255,.92); color: #1d2733; border: 1px solid #c9c5bb; border-radius: 6px; padding: 5px 10px; font-size: 13px; cursor: pointer; min-width: 36px; }
+.v3d-views button:hover { background: #fff; border-color: var(--brand-orange); }
 .v3d-hint { position: absolute; left: 10px; bottom: 8px; color: #6b665c; pointer-events: none; }
 .v3d-side { width: 260px; flex: none; border-left: 1px solid var(--line); background: var(--sheet); padding: 12px; display: flex; flex-direction: column; gap: 12px; overflow: auto; }
 .v3d-now b, .v3d-conc b.num { display: block; font-size: 18px; }
@@ -2933,8 +2936,8 @@ function v3Build(plan, ov) {
   const THREE = V3.THREE;
   ov.innerHTML = `<div class="v3d-top"><b>3D 施工動畫</b><span class="small muted" id="v3Info"></span><span class="sp"></span>
     <label class="small"><input type="checkbox" id="v3Ghost" checked> 顯示還沒蓋的部分</label>
-    <button class="btn small" id="v3Reset" type="button">重設視角</button><button class="btn small" id="v3Close" type="button">關閉</button></div>
-    <div class="v3d-main"><div class="v3d-cv"><canvas id="v3Cv"></canvas><div class="v3d-hint small">拖曳旋轉 · 右鍵或 Shift 拖曳平移 · 滾輪/兩指縮放</div></div>
+    <button class="btn small" id="v3Close" type="button">關閉</button></div>
+    <div class="v3d-main"><div class="v3d-cv"><canvas id="v3Cv"></canvas><div class="v3d-views" role="group" aria-label="視角"><button type="button" data-view="fit" title="回到看得到整棟的斜角">看整棟</button><button type="button" data-view="front" title="從平面圖下方那一面看">前</button><button type="button" data-view="back" title="從平面圖上方那一面看">後</button><button type="button" data-view="left" title="從平面圖左邊看">左</button><button type="button" data-view="right" title="從平面圖右邊看">右</button><button type="button" data-view="top" title="從正上方往下看">上</button></div><div class="v3d-hint small">拖曳旋轉 · 右鍵或 Shift 拖曳平移 · 滾輪在游標處縮放 · 點兩下拉近該處</div></div>
     <aside class="v3d-side"><div class="v3d-now" id="v3Now"></div><div class="v3d-conc" id="v3Conc"></div>
     <div class="v3d-leg">${[['col', '柱'], ['rc', 'RC 牆'], ['brick', '磚牆'], ['block', '白磚/輕隔間'], ['beam', '梁'], ['slab', '樓板']].map(([k, n]) => `<span><i style="background:${V3_COLOR[k]}"></i>${n}</span>`).join('')}<span><i style="background:var(--brand-orange)"></i>施工中</span></div>
     <div class="v3d-floors" id="v3Floors"></div></aside></div>
@@ -3000,29 +3003,82 @@ function v3Build(plan, ov) {
   const grid = new THREE.GridHelper(gs, gs / 5, 0xb9b4a8, 0xdcd8cf); grid.position.set((bx0 + bx1) / 2, 0.001, -(by0 + by1) / 2); scene.add(grid);
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(gs, gs), new THREE.MeshBasicMaterial({ color: '#8f8a80', transparent: true, opacity: 0.12, depthWrite: false, side: THREE.DoubleSide }));
   ground.rotation.x = -Math.PI / 2; ground.position.copy(grid.position); scene.add(ground);
-  // 相機(自己寫的環繞控制)
-  const C = {}; V3.C = C;
-  const resetCam = () => Object.assign(C, { th: -0.75, ph: 1.08, r: Math.max(30, span * 2.1), tx: (bx0 + bx1) / 2, ty: (zMin + zMax) / 2, tz: -(by0 + by1) / 2 });
-  resetCam();
+  // 相機(自己寫的環繞控制):C 是目前位置,G 是要平順移過去的目標
+  const C = {}; V3.C = C; let G = null;
+  const Hb = zMax - zMin, Wx = bx1 - bx0, Wy = by1 - by0, Wd = Math.max(Wx, Wy);
+  const ctr = () => ({ tx: (bx0 + bx1) / 2, ty: (zMin + zMax) / 2, tz: -(by0 + by1) / 2 });
+  // 讓寬 w、高 h 的東西剛好塞滿畫面的距離
+  const fitR = (w, h, depth) => Math.max(10, Math.max(h, w / (camera.aspect || 1)) / 2 / Math.tan(camera.fov * Math.PI / 360) * 1.12 + (depth || 0) / 2);
+  const VIEWS = {
+    fit: () => Object.assign(ctr(), { th: -0.75, ph: 1.08, r: fitR(Wd * 1.35, Hb, Wd) }),
+    front: () => Object.assign(ctr(), { th: 0, ph: 1.5, r: fitR(Wx, Hb, Wy) }),
+    back: () => Object.assign(ctr(), { th: Math.PI, ph: 1.5, r: fitR(Wx, Hb, Wy) }),
+    left: () => Object.assign(ctr(), { th: -Math.PI / 2, ph: 1.5, r: fitR(Wy, Hb, Wx) }),
+    right: () => Object.assign(ctr(), { th: Math.PI / 2, ph: 1.5, r: fitR(Wy, Hb, Wx) }),
+    top: () => Object.assign(ctr(), { th: 0, ph: 0.02, r: fitR(Wx, Wy, Hb) }),
+  };
+  const goTo = g => { G = Object.assign({}, C, g); let d = (G.th - C.th) % (2 * Math.PI); if (d > Math.PI) d -= 2 * Math.PI; if (d < -Math.PI) d += 2 * Math.PI; G.th = C.th + d; };
+  const stepCam = dt => {
+    if (!G) return; const k = 1 - Math.exp(-dt * 7); let done = true;
+    for (const key of ['th', 'ph', 'r', 'tx', 'ty', 'tz']) { C[key] += (G[key] - C[key]) * k; if (Math.abs(G[key] - C[key]) > (key === 'th' || key === 'ph' ? 1e-3 : 0.02)) done = false; }
+    if (done) { Object.assign(C, G); G = null; }
+  };
+  Object.assign(C, VIEWS.fit());
   const applyCam = () => { camera.position.set(C.tx + C.r * Math.sin(C.ph) * Math.sin(C.th), C.ty + C.r * Math.cos(C.ph), C.tz + C.r * Math.sin(C.ph) * Math.cos(C.th)); camera.lookAt(C.tx, C.ty, C.tz); };
-  const pan = (dx, dy) => { const k = C.r * 0.0016, rx = Math.cos(C.th), rz = -Math.sin(C.th); C.tx -= dx * k * rx; C.tz -= dx * k * rz; C.ty += dy * k; };
-  const pts = new Map(); let pinch = null;
+  const pan = (dx, dy) => {
+    const k = C.r * Math.tan(camera.fov * Math.PI / 360) * 2 / (cv.clientHeight || 600); // 一個像素 = 幾公尺
+    const rx = Math.cos(C.th), rz = -Math.sin(C.th), ux = -Math.cos(C.ph) * Math.sin(C.th), uy = Math.sin(C.ph), uz = -Math.cos(C.ph) * Math.cos(C.th);
+    C.tx += -dx * k * rx + dy * k * ux; C.ty += dy * k * uy; C.tz += -dx * k * rz + dy * k * uz;
+  };
+  // 滑鼠/手指底下是哪一點(點到構件就用構件,沒點到就用畫面中心那個平面)
+  const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+  const pick = (cx, cy) => {
+    const rc = cv.getBoundingClientRect(); ndc.set((cx - rc.left) / rc.width * 2 - 1, -(cy - rc.top) / rc.height * 2 + 1);
+    applyCam(); camera.updateMatrixWorld(); ray.setFromCamera(ndc, camera);
+    const objs = []; for (const st of steps) for (const m of st.meshes) if (m.grp.visible && m.mesh.material !== ghostM) objs.push(m.mesh);
+    const hit = ray.intersectObjects(objs, false)[0]; if (hit) return hit.point;
+    const pl = new THREE.Plane().setFromNormalAndCoplanarPoint(camera.getWorldDirection(new THREE.Vector3()), new THREE.Vector3(C.tx, C.ty, C.tz));
+    return ray.ray.intersectPlane(pl, new THREE.Vector3());
+  };
+  // 以某一點為中心縮放(那一點在畫面上不動)
+  const zoomAt = (P, k) => {
+    const nr = Math.min(span * 8, Math.max(2, C.r * k)); k = nr / C.r;
+    if (P) { C.tx = P.x + (C.tx - P.x) * k; C.ty = P.y + (C.ty - P.y) * k; C.tz = P.z + (C.tz - P.z) * k; }
+    C.r = nr;
+  };
+  const focusAt = (cx, cy) => { const P = pick(cx, cy); if (P) goTo({ tx: P.x, ty: P.y, tz: P.z, r: Math.max(8, Math.min(C.r * 0.5, span * 0.6)) }); };
+  const pts = new Map(); let pinch = null, tap = null, lastTap = null;
   cv.addEventListener('contextmenu', e => e.preventDefault());
-  cv.addEventListener('pointerdown', e => { try { cv.setPointerCapture(e.pointerId); } catch (er) {} pts.set(e.pointerId, { x: e.clientX, y: e.clientY, b: e.button, sh: e.shiftKey }); pinch = null; });
+  cv.addEventListener('pointerdown', e => {
+    try { cv.setPointerCapture(e.pointerId); } catch (er) {}
+    G = null; pts.set(e.pointerId, { x: e.clientX, y: e.clientY, b: e.button, sh: e.shiftKey });
+    pinch = null; tap = pts.size === 1 ? { x: e.clientX, y: e.clientY, t: performance.now() } : null;
+  });
   cv.addEventListener('pointermove', e => {
     const p = pts.get(e.pointerId); if (!p) return;
     const dx = e.clientX - p.x, dy = e.clientY - p.y; p.x = e.clientX; p.y = e.clientY;
+    if (tap && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) > 6) tap = null;
     if (pts.size >= 2) {
       const [a, b] = [...pts.values()];
       const d = Math.hypot(a.x - b.x, a.y - b.y) || 1, m = [(a.x + b.x) / 2, (a.y + b.y) / 2];
-      if (pinch) { C.r = Math.min(span * 8, Math.max(2, C.r * pinch.d / d)); pan(m[0] - pinch.m[0], m[1] - pinch.m[1]); }
+      if (pinch) { zoomAt(pick(m[0], m[1]), pinch.d / d); pan(m[0] - pinch.m[0], m[1] - pinch.m[1]); }
       pinch = { d, m }; return;
     }
-    if (p.b === 2 || p.sh) pan(dx, dy); else { C.th -= dx * 0.006; C.ph = Math.min(1.55, Math.max(0.12, C.ph - dy * 0.006)); }
+    if (p.b === 2 || p.b === 1 || p.sh) pan(dx, dy); else { C.th -= dx * 0.006; C.ph = Math.min(1.55, Math.max(0.02, C.ph - dy * 0.006)); }
   });
-  const up = e => { pts.delete(e.pointerId); pinch = null; };
+  const up = e => {
+    pts.delete(e.pointerId); pinch = null;
+    // 點兩下(手機輕點兩下)= 拉近到那個位置
+    if (tap && e.type === 'pointerup' && performance.now() - tap.t < 300) {
+      const now = performance.now();
+      if (lastTap && now - lastTap.t < 350 && Math.hypot(tap.x - lastTap.x, tap.y - lastTap.y) < 25) { focusAt(tap.x, tap.y); lastTap = null; }
+      else lastTap = { x: tap.x, y: tap.y, t: now };
+    }
+    tap = null;
+  };
   cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
-  cv.addEventListener('wheel', e => { e.preventDefault(); C.r = Math.min(span * 8, Math.max(2, C.r * Math.exp(e.deltaY * 0.0012))); }, { passive: false });
+  cv.addEventListener('wheel', e => { e.preventDefault(); G = null; zoomAt(pick(e.clientX, e.clientY), Math.exp(e.deltaY * 0.0012)); }, { passive: false });
+  ov.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => goTo(VIEWS[b.dataset.view]())));
   const fit = () => { const w = cv.parentElement.clientWidth, h = cv.parentElement.clientHeight; if (!w || !h) return; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); };
   const ro = new ResizeObserver(fit); ro.observe(cv.parentElement); fit();
   // 進度
@@ -3057,7 +3113,6 @@ function v3Build(plan, ov) {
   rng.addEventListener('input', () => { V3.t = parseFloat(rng.value); V3.play = false; });
   $('#v3Play').addEventListener('click', () => { if (V3.t >= N) V3.t = 0; V3.play = !V3.play; lastSync = -1; });
   $('#v3Ghost').addEventListener('change', () => { lastSync = -1; });
-  $('#v3Reset').addEventListener('click', resetCam);
   const onKey = e => { if (e.key === 'Escape') close(); else if (e.key === ' ' && !/BUTTON|INPUT|SELECT/.test(e.target.tagName)) { e.preventDefault(); $('#v3Play').click(); } };
   const close = () => {
     V3.open = false; cancelAnimationFrame(V3.raf); ro.disconnect(); document.removeEventListener('keydown', onKey);
@@ -3072,7 +3127,7 @@ function v3Build(plan, ov) {
       const dt = Math.min(2, Math.max(0, (now - prev) / 1000)); prev = now; // 電腦慢時照實際經過的時間前進
       if (V3.play) { V3.t = Math.min(N, V3.t + dt * parseFloat($('#v3Spd').value)); if (V3.t >= N) V3.play = false; }
       if (V3.t !== lastSync || V3.play) { sync(); lastSync = V3.t; }
-      applyCam(); renderer.render(scene, camera);
+      stepCam(dt); applyCam(); renderer.render(scene, camera);
     } catch (e) { console.error(e); V3.play = false; showNote('3D 播放出錯:' + esc((e && e.message) || String(e)) + '<br>請把這行字告訴 Claude。', true); return; }
     V3.raf = requestAnimationFrame(loop);
   };
