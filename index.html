@@ -1068,8 +1068,10 @@ function analyzeRegion(F, box, layerRoles, params, onProgress) {
   }
   const railFrac = wCnt + rCnt ? rCnt / (wCnt + rCnt) : 0;
   const footprint = { railFrac, area: (fpArea * cm2 - extPer * px * U * offE) / 1e4, perim: Math.max(0, extPer * px * U - 8 * offE) / 100, outline: fpOut };
-  // 挑空/電梯井/管道間(給 3D 用,不影響數量):沒有空間名稱、裡面畫了對角線 X 的封閉區
-  const voids = findVoids(lab, nx, ny, px, box, polys, U, r);
+  // 挑空/電梯井/管道間/透空造型框:沒有空間名稱、裡面畫了對角線 X 的封閉區 → 不做樓板,樓地板面積扣除
+  const VV = findVoids(lab, nx, ny, px, box, polys, U, r), voids = VV.loops;
+  footprint.areaGross = footprint.area; footprint.voidArea = VV.area;
+  footprint.area = Math.max(0, footprint.area - VV.area);
 
   // 牆長
   const walls = wallLengths(polys, roleOf, U);
@@ -1100,7 +1102,7 @@ function findVoids(lab, nx, ny, px, box, polys, U, r) {
   // 斜線(不是水平/垂直、長度 ≥ 1 m)
   const diag = [];
   for (const p of polys) { const q = p.p; for (let i = 0; i + 3 < q.length; i += 2) { const dx = q[i + 2] - q[i], dy = q[i + 3] - q[i + 1], L = Math.hypot(dx, dy); if (L * U >= 100 && Math.abs(dx) > 0.3 * L && Math.abs(dy) > 0.3 * L) diag.push([q[i], q[i + 1], q[i + 2], q[i + 3], L]); } }
-  if (!diag.length) return [];
+  if (!diag.length) return { loops: [], area: 0 };
   // 未標示區塊找連通區(共用一個堆疊)
   const comp = new Int32Array(N), stack = new Int32Array(N); let nc = 0; const info = [null];
   for (let s0 = 0; s0 < N; s0++) {
@@ -1113,16 +1115,17 @@ function findVoids(lab, nx, ny, px, box, polys, U, r) {
       if (i + nx < N && lab[i + nx] === 0 && !comp[i + nx]) { comp[i + nx] = id; stack[sp++] = i + nx; } }
     info.push({ cnt, x0, y0, x1, y1 });
   }
-  const out = [], pad = (r + 2) * px;
+  const out = [], pad = (r + 2) * px; let area = 0;
   for (let id = 1; id <= nc; id++) {
     const c = info[id]; if (c.cnt < minCnt) continue;
     const bx0 = box[0] + (c.x0 - 1) * px - pad, by0 = box[1] + (c.y0 - 1) * px - pad, bx1 = box[0] + c.x1 * px + pad, by1 = box[1] + c.y1 * px + pad;
     const dg = Math.hypot(bx1 - bx0, by1 - by0);
     const hasX = diag.some(d => d[4] >= dg * 0.55 && Math.min(d[0], d[2]) >= bx0 && Math.max(d[0], d[2]) <= bx1 && Math.min(d[1], d[3]) >= by0 && Math.max(d[1], d[3]) <= by1);
     if (!hasX) continue;
+    area += c.cnt * cm2 / 1e4;
     for (const lp of traceLoops(comp, nx, ny, id)) { const simp = dpSimplify(lp, 1.2); if (simp.length >= 3) out.push(simp.map(q => [box[0] + (q[0] - 1) * px, box[1] + (q[1] - 1) * px])); }
   }
-  return out;
+  return { loops: out, area };
 }
 
 function dilate(src, nx, ny, r) {
@@ -1467,7 +1470,7 @@ function computeQuantities(A, params, finishes, roomOverrides) {
   }
   let rcWallV = 0, rcWallA = 0;
   for (const w of wallInfo) if (w.role === 'wall_rc') { rcWallV += w.area * w.thk / 100; rcWallA += w.area; }
-  add('結構', '混凝土 — 樓板', 'm³', slabV, 'concrete', `樓地板 ${floorArea.toFixed(2)} m² × 版厚 ${P.slabT} cm`);
+  add('結構', '混凝土 — 樓板', 'm³', slabV, 'concrete', `樓地板 ${floorArea.toFixed(2)} m²${A.footprint.voidArea > 0.05 ? `(已扣挑空/透空 ${A.footprint.voidArea.toFixed(1)} m²)` : ''} × 版厚 ${P.slabT} cm`);
   add('結構', '混凝土 — 梁', 'm³', beamV, 'concrete', `${A.beamFromLayer ? '梁線' : '估算'} ${beamL.toFixed(1)} m × ${P.beamB}×(${P.beamD}-${P.slabT}) cm`);
   add('結構', '混凝土 — 柱', 'm³', colV, 'concrete', `${A.columns.length} 支,斷面合計 ${colA.toFixed(2)} m² × ${Hw.toFixed(2)} m`);
   add('結構', '混凝土 — RC牆', 'm³', rcWallV, 'concrete', wallInfo.filter(w => w.role === 'wall_rc').map(w => `${w.thk}cm 牆長 ${w.len.toFixed(1)} m`).join(','));
