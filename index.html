@@ -1068,6 +1068,8 @@ function analyzeRegion(F, box, layerRoles, params, onProgress) {
   }
   const railFrac = wCnt + rCnt ? rCnt / (wCnt + rCnt) : 0;
   const footprint = { railFrac, area: (fpArea * cm2 - extPer * px * U * offE) / 1e4, perim: Math.max(0, extPer * px * U - 8 * offE) / 100, outline: fpOut };
+  // 挑空/電梯井/管道間(給 3D 用,不影響數量):沒有空間名稱、裡面畫了對角線 X 的封閉區
+  const voids = findVoids(lab, nx, ny, px, box, polys, U, r);
 
   // 牆長
   const walls = wallLengths(polys, roleOf, U);
@@ -1090,7 +1092,37 @@ function analyzeRegion(F, box, layerRoles, params, onProgress) {
   // 開口分配到牆種、房間、外部
   assignOpenings(openings, polys, roleOf, lab, nx, ny, px, box, U, rooms);
   if (onProgress) onProgress(1);
-  return { box, px, nx, ny, lab, rooms, footprint, walls, columns, beamLen, beamFromLayer, beamSegs, openings, labelsFound: labels.length };
+  return { box, px, nx, ny, lab, rooms, footprint, voids, walls, columns, beamLen, beamFromLayer, beamSegs, openings, labelsFound: labels.length };
+}
+
+function findVoids(lab, nx, ny, px, box, polys, U, r) {
+  const N = nx * ny, cm2 = (px * U) * (px * U), minCnt = 2e4 / cm2; // 至少 2 m²
+  // 斜線(不是水平/垂直、長度 ≥ 1 m)
+  const diag = [];
+  for (const p of polys) { const q = p.p; for (let i = 0; i + 3 < q.length; i += 2) { const dx = q[i + 2] - q[i], dy = q[i + 3] - q[i + 1], L = Math.hypot(dx, dy); if (L * U >= 100 && Math.abs(dx) > 0.3 * L && Math.abs(dy) > 0.3 * L) diag.push([q[i], q[i + 1], q[i + 2], q[i + 3], L]); } }
+  if (!diag.length) return [];
+  // 未標示區塊找連通區(共用一個堆疊)
+  const comp = new Int32Array(N), stack = new Int32Array(N); let nc = 0; const info = [null];
+  for (let s0 = 0; s0 < N; s0++) {
+    if (lab[s0] !== 0 || comp[s0]) continue;
+    const id = ++nc; let sp = 0, cnt = 0, x0 = nx, y0 = ny, x1 = -1, y1 = -1; comp[s0] = id; stack[sp++] = s0;
+    while (sp) { const i = stack[--sp]; cnt++; const x = i % nx, y = (i - x) / nx; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      if (x > 0 && lab[i - 1] === 0 && !comp[i - 1]) { comp[i - 1] = id; stack[sp++] = i - 1; }
+      if (x < nx - 1 && lab[i + 1] === 0 && !comp[i + 1]) { comp[i + 1] = id; stack[sp++] = i + 1; }
+      if (i >= nx && lab[i - nx] === 0 && !comp[i - nx]) { comp[i - nx] = id; stack[sp++] = i - nx; }
+      if (i + nx < N && lab[i + nx] === 0 && !comp[i + nx]) { comp[i + nx] = id; stack[sp++] = i + nx; } }
+    info.push({ cnt, x0, y0, x1, y1 });
+  }
+  const out = [], pad = (r + 2) * px;
+  for (let id = 1; id <= nc; id++) {
+    const c = info[id]; if (c.cnt < minCnt) continue;
+    const bx0 = box[0] + (c.x0 - 1) * px - pad, by0 = box[1] + (c.y0 - 1) * px - pad, bx1 = box[0] + c.x1 * px + pad, by1 = box[1] + c.y1 * px + pad;
+    const dg = Math.hypot(bx1 - bx0, by1 - by0);
+    const hasX = diag.some(d => d[4] >= dg * 0.55 && Math.min(d[0], d[2]) >= bx0 && Math.max(d[0], d[2]) <= bx1 && Math.min(d[1], d[3]) >= by0 && Math.max(d[1], d[3]) <= by1);
+    if (!hasX) continue;
+    for (const lp of traceLoops(comp, nx, ny, id)) { const simp = dpSimplify(lp, 1.2); if (simp.length >= 3) out.push(simp.map(q => [box[0] + (q[0] - 1) * px, box[1] + (q[1] - 1) * px])); }
+  }
+  return out;
 }
 
 function dilate(src, nx, ny, r) {
@@ -1880,8 +1912,10 @@ function floorGeom(A, params) {
   for (const w of A.walls || []) for (const g of w.segs || []) walls.push([r2(g[0] / 100), r2(g[1] / 100), r2(g[2] / 100), r2(g[3] / 100), r2(w.thk / 100), WALL_CODE[w.role] || 'rc']);
   const cols = (A.columns || []).map(c => [r2(c.cx * U / 100), r2(c.cy * U / 100), r2(c.w / 100), r2(c.h / 100)]);
   const beams = (A.beamSegs || []).map(g => [r2(g[0] / 100), r2(g[1] / 100), r2(g[2] / 100), r2(g[3] / 100), r2(g[4] / 100)]);
-  const slab = ((A.footprint && A.footprint.outline) || []).map(lp => { const o = []; for (const q of lp) o.push(r2(q[0] * U / 100), r2(q[1] * U / 100)); return o; });
-  return { walls, cols, beams, slab };
+  const loopM = lp => { const o = []; for (const q of lp) o.push(r2(q[0] * U / 100), r2(q[1] * U / 100)); return o; };
+  const slab = ((A.footprint && A.footprint.outline) || []).map(loopM);
+  const voids = (A.voids || []).map(loopM);
+  return { walls, cols, beams, slab, voids };
 }
 /* 兩組柱位對齊:找平移量 d 使 B + d ≈ A(柱網投票),回傳 {dx, dy, n 對到幾支} */
 function alignByColumns(A, B, guess, tol) {
@@ -1913,6 +1947,7 @@ function shiftGeom(g, dx, dy) {
     cols: g.cols.map(c => [r2(c[0] + dx), r2(c[1] + dy), c[2], c[3]]),
     beams: g.beams.map(b => [r2(b[0] + dx), r2(b[1] + dy), r2(b[2] + dx), r2(b[3] + dy), b[4]]),
     slab: g.slab.map(lp => lp.map((v, i) => r2(v + (i % 2 ? dy : dx)))),
+    voids: (g.voids || []).map(lp => lp.map((v, i) => r2(v + (i % 2 ? dy : dx)))),
   };
 }
 
@@ -2804,16 +2839,16 @@ function v3Plan(floors) {
   // 樓板補畫(只影響 3D 畫面,不改數量):
   // 1. 抓不到樓板的樓層(屋突):沿用下面最近一層自己圍得到的樓板
   // 2. 梁、柱超出自己樓板很多(屋頂層只圍到屋突):屋頂板沿用下一層的樓板外框
-  const own = out.map(o => o.g.slab);
+  const own = out.map(o => o.g.slab), ownV = out.map(o => o.g.voids || []);
   const ext = g => { const b = v3BBox({ walls: [], cols: g.cols, beams: g.beams, slab: [] }); return b; };
   out.forEach((o, k) => {
     if (k === 0) return;
-    if (!own[k].length) { for (let j = k - 1; j >= 0; j--) if (own[j].length) { o.g = Object.assign({}, o.g, { slab: own[j] }); o.slabNote = '沿用 ' + out[j].f.name.replace(/\s*⚠/, ''); break; } return; }
+    if (!own[k].length) { for (let j = k - 1; j >= 0; j--) if (own[j].length) { o.g = Object.assign({}, o.g, { slab: own[j], voids: ownV[j] }); o.slabNote = '沿用 ' + out[j].f.name.replace(/\s*⚠/, ''); break; } return; }
     const sb = v3BBox({ walls: [], cols: [], beams: [], slab: own[k] }), eb = ext(o.g), pb = own[k - 1].length ? v3BBox({ walls: [], cols: [], beams: [], slab: own[k - 1] }) : null;
     if (!sb || !eb || !pb) return;
     const over = Math.max(sb[0] - eb[0], sb[1] - eb[1], eb[2] - sb[2], eb[3] - sb[3]);
     const bigger = v3Area(own[k - 1]) > v3Area(own[k]) * 1.5;
-    if (over > 1.5 && bigger) { const inside = sb[0] >= pb[0] - 0.5 && sb[1] >= pb[1] - 0.5 && sb[2] <= pb[2] + 0.5 && sb[3] <= pb[3] + 0.5; o.g = Object.assign({}, o.g, { slab: inside ? own[k - 1] : own[k - 1].concat(own[k]) }); o.slabNote = '屋頂板沿用 ' + out[k - 1].f.name.replace(/\s*⚠/, ''); }
+    if (over > 1.5 && bigger) { const inside = sb[0] >= pb[0] - 0.5 && sb[1] >= pb[1] - 0.5 && sb[2] <= pb[2] + 0.5 && sb[3] <= pb[3] + 0.5; o.g = Object.assign({}, o.g, { slab: inside ? own[k - 1] : own[k - 1].concat(own[k]), voids: ownV[k - 1].concat(ownV[k]) }); o.slabNote = '屋頂板沿用 ' + out[k - 1].f.name.replace(/\s*⚠/, ''); }
   });
   const levels = []; let z = 0;
   for (const o of out) {
@@ -2848,11 +2883,19 @@ function v3Geo(THREE, boxes) {
   const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.computeVertexNormals();
   return geo;
 }
-function v3SlabGeo(THREE, loops, T) {
+function v3InPoly(x, y, lp) { let c = false; for (let i = 0, j = lp.length - 2; i + 1 < lp.length; j = i, i += 2) { const xi = lp[i], yi = lp[i + 1], xj = lp[j], yj = lp[j + 1]; if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) c = !c; } return c; }
+function v3SlabGeo(THREE, loops, T, voids) {
   const pos = [];
   for (const lp of loops) {
     if (lp.length < 6) continue;
     const sh = new THREE.Shape(); sh.moveTo(lp[0], lp[1]); for (let i = 2; i + 1 < lp.length; i += 2) sh.lineTo(lp[i], lp[i + 1]);
+    // 挑空、電梯井:挖洞
+    for (const v of voids || []) {
+      if (v.length < 6) continue;
+      let cx = 0, cy = 0; for (let i = 0; i + 1 < v.length; i += 2) { cx += v[i]; cy += v[i + 1]; } cx /= v.length / 2; cy /= v.length / 2;
+      if (!v3InPoly(v[0], v[1], lp) && !v3InPoly(cx, cy, lp)) continue;
+      const h = new THREE.Path(); h.moveTo(v[0], v[1]); for (let i = 2; i + 1 < v.length; i += 2) h.lineTo(v[i], v[i + 1]); sh.holes.push(h);
+    }
     const g = new THREE.ExtrudeGeometry(sh, { depth: T, bevelEnabled: false }); g.rotateX(-Math.PI / 2);
     const g2 = g.index ? g.toNonIndexed() : g; pos.push(...g2.attributes.position.array); g.dispose(); if (g2 !== g) g2.dispose();
   }
@@ -2927,7 +2970,7 @@ function v3Build(plan, ov) {
     const nextT = plan.levels[li + 1] ? plan.levels[li + 1].T : 0;
     const parts = {};
     if (g.beams.length) parts.beam = [{ geo: v3Geo(THREE, g.beams.map(b => [b[0], b[1], b[2], b[3], b[4], 0, bD])), mat: M.beam, y: z - bD }];
-    if (g.slab.length) parts.slab = [{ geo: v3SlabGeo(THREE, g.slab, L.T), mat: M.slab, y: z - L.T }];
+    if (g.slab.length) parts.slab = [{ geo: v3SlabGeo(THREE, g.slab, L.T, g.voids), mat: M.slab, y: z - L.T }];
     const hw = Math.max(0.3, L.H - nextT);
     if (g.cols.length) parts.col = [{ geo: v3Geo(THREE, g.cols.map(c => ({ c, z0: 0, z1: hw }))), mat: M.col, y: z }];
     if (g.walls.length) {

@@ -785,6 +785,8 @@ function analyzeRegion(F, box, layerRoles, params, onProgress) {
   }
   const railFrac = wCnt + rCnt ? rCnt / (wCnt + rCnt) : 0;
   const footprint = { railFrac, area: (fpArea * cm2 - extPer * px * U * offE) / 1e4, perim: Math.max(0, extPer * px * U - 8 * offE) / 100, outline: fpOut };
+  // 挑空/電梯井/管道間(給 3D 用,不影響數量):沒有空間名稱、裡面畫了對角線 X 的封閉區
+  const voids = findVoids(lab, nx, ny, px, box, polys, U, r);
 
   // 牆長
   const walls = wallLengths(polys, roleOf, U);
@@ -807,7 +809,37 @@ function analyzeRegion(F, box, layerRoles, params, onProgress) {
   // 開口分配到牆種、房間、外部
   assignOpenings(openings, polys, roleOf, lab, nx, ny, px, box, U, rooms);
   if (onProgress) onProgress(1);
-  return { box, px, nx, ny, lab, rooms, footprint, walls, columns, beamLen, beamFromLayer, beamSegs, openings, labelsFound: labels.length };
+  return { box, px, nx, ny, lab, rooms, footprint, voids, walls, columns, beamLen, beamFromLayer, beamSegs, openings, labelsFound: labels.length };
+}
+
+function findVoids(lab, nx, ny, px, box, polys, U, r) {
+  const N = nx * ny, cm2 = (px * U) * (px * U), minCnt = 2e4 / cm2; // 至少 2 m²
+  // 斜線(不是水平/垂直、長度 ≥ 1 m)
+  const diag = [];
+  for (const p of polys) { const q = p.p; for (let i = 0; i + 3 < q.length; i += 2) { const dx = q[i + 2] - q[i], dy = q[i + 3] - q[i + 1], L = Math.hypot(dx, dy); if (L * U >= 100 && Math.abs(dx) > 0.3 * L && Math.abs(dy) > 0.3 * L) diag.push([q[i], q[i + 1], q[i + 2], q[i + 3], L]); } }
+  if (!diag.length) return [];
+  // 未標示區塊找連通區(共用一個堆疊)
+  const comp = new Int32Array(N), stack = new Int32Array(N); let nc = 0; const info = [null];
+  for (let s0 = 0; s0 < N; s0++) {
+    if (lab[s0] !== 0 || comp[s0]) continue;
+    const id = ++nc; let sp = 0, cnt = 0, x0 = nx, y0 = ny, x1 = -1, y1 = -1; comp[s0] = id; stack[sp++] = s0;
+    while (sp) { const i = stack[--sp]; cnt++; const x = i % nx, y = (i - x) / nx; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      if (x > 0 && lab[i - 1] === 0 && !comp[i - 1]) { comp[i - 1] = id; stack[sp++] = i - 1; }
+      if (x < nx - 1 && lab[i + 1] === 0 && !comp[i + 1]) { comp[i + 1] = id; stack[sp++] = i + 1; }
+      if (i >= nx && lab[i - nx] === 0 && !comp[i - nx]) { comp[i - nx] = id; stack[sp++] = i - nx; }
+      if (i + nx < N && lab[i + nx] === 0 && !comp[i + nx]) { comp[i + nx] = id; stack[sp++] = i + nx; } }
+    info.push({ cnt, x0, y0, x1, y1 });
+  }
+  const out = [], pad = (r + 2) * px;
+  for (let id = 1; id <= nc; id++) {
+    const c = info[id]; if (c.cnt < minCnt) continue;
+    const bx0 = box[0] + (c.x0 - 1) * px - pad, by0 = box[1] + (c.y0 - 1) * px - pad, bx1 = box[0] + c.x1 * px + pad, by1 = box[1] + c.y1 * px + pad;
+    const dg = Math.hypot(bx1 - bx0, by1 - by0);
+    const hasX = diag.some(d => d[4] >= dg * 0.55 && Math.min(d[0], d[2]) >= bx0 && Math.max(d[0], d[2]) <= bx1 && Math.min(d[1], d[3]) >= by0 && Math.max(d[1], d[3]) <= by1);
+    if (!hasX) continue;
+    for (const lp of traceLoops(comp, nx, ny, id)) { const simp = dpSimplify(lp, 1.2); if (simp.length >= 3) out.push(simp.map(q => [box[0] + (q[0] - 1) * px, box[1] + (q[1] - 1) * px])); }
+  }
+  return out;
 }
 
 function dilate(src, nx, ny, r) {
@@ -1597,8 +1629,10 @@ function floorGeom(A, params) {
   for (const w of A.walls || []) for (const g of w.segs || []) walls.push([r2(g[0] / 100), r2(g[1] / 100), r2(g[2] / 100), r2(g[3] / 100), r2(w.thk / 100), WALL_CODE[w.role] || 'rc']);
   const cols = (A.columns || []).map(c => [r2(c.cx * U / 100), r2(c.cy * U / 100), r2(c.w / 100), r2(c.h / 100)]);
   const beams = (A.beamSegs || []).map(g => [r2(g[0] / 100), r2(g[1] / 100), r2(g[2] / 100), r2(g[3] / 100), r2(g[4] / 100)]);
-  const slab = ((A.footprint && A.footprint.outline) || []).map(lp => { const o = []; for (const q of lp) o.push(r2(q[0] * U / 100), r2(q[1] * U / 100)); return o; });
-  return { walls, cols, beams, slab };
+  const loopM = lp => { const o = []; for (const q of lp) o.push(r2(q[0] * U / 100), r2(q[1] * U / 100)); return o; };
+  const slab = ((A.footprint && A.footprint.outline) || []).map(loopM);
+  const voids = (A.voids || []).map(loopM);
+  return { walls, cols, beams, slab, voids };
 }
 /* 兩組柱位對齊:找平移量 d 使 B + d ≈ A(柱網投票),回傳 {dx, dy, n 對到幾支} */
 function alignByColumns(A, B, guess, tol) {
@@ -1630,6 +1664,7 @@ function shiftGeom(g, dx, dy) {
     cols: g.cols.map(c => [r2(c[0] + dx), r2(c[1] + dy), c[2], c[3]]),
     beams: g.beams.map(b => [r2(b[0] + dx), r2(b[1] + dy), r2(b[2] + dx), r2(b[3] + dy), b[4]]),
     slab: g.slab.map(lp => lp.map((v, i) => r2(v + (i % 2 ? dy : dx)))),
+    voids: (g.voids || []).map(lp => lp.map((v, i) => r2(v + (i % 2 ? dy : dx)))),
   };
 }
 
