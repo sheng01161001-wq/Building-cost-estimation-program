@@ -1126,6 +1126,7 @@ function v3Level(name) {
   if ((m = /^([\d一二三四五六七八九十]+)(?:[~至\-到][\d一二三四五六七八九十]+)?[層樓F]/i.exec(s))) return v3cn(m[1]);
   return NaN;
 }
+function v3Area(loops) { let t = 0; for (const lp of loops) { let a = 0; for (let i = 0; i + 1 < lp.length; i += 2) { const j = (i + 2) % lp.length; a += lp[i] * lp[j + 1] - lp[j] * lp[i + 1]; } t += Math.abs(a) / 2; } return t; }
 function v3BBox(g) {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   const P = (x, y) => { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; };
@@ -1161,6 +1162,20 @@ function v3Plan(floors) {
     const gg = QE.shiftGeom(g, d[0], d[1]);
     out.push({ f: src[k].f, lv: src[k].lv, g: gg, bb: v3BBox(gg) });
   }
+  // 樓板補畫(只影響 3D 畫面,不改數量):
+  // 1. 抓不到樓板的樓層(屋突):沿用下面最近一層自己圍得到的樓板
+  // 2. 梁、柱超出自己樓板很多(屋頂層只圍到屋突):屋頂板沿用下一層的樓板外框
+  const own = out.map(o => o.g.slab);
+  const ext = g => { const b = v3BBox({ walls: [], cols: g.cols, beams: g.beams, slab: [] }); return b; };
+  out.forEach((o, k) => {
+    if (k === 0) return;
+    if (!own[k].length) { for (let j = k - 1; j >= 0; j--) if (own[j].length) { o.g = Object.assign({}, o.g, { slab: own[j] }); o.slabNote = '沿用 ' + out[j].f.name.replace(/\s*⚠/, ''); break; } return; }
+    const sb = v3BBox({ walls: [], cols: [], beams: [], slab: own[k] }), eb = ext(o.g), pb = own[k - 1].length ? v3BBox({ walls: [], cols: [], beams: [], slab: own[k - 1] }) : null;
+    if (!sb || !eb || !pb) return;
+    const over = Math.max(sb[0] - eb[0], sb[1] - eb[1], eb[2] - sb[2], eb[3] - sb[3]);
+    const bigger = v3Area(own[k - 1]) > v3Area(own[k]) * 1.5;
+    if (over > 1.5 && bigger) { const inside = sb[0] >= pb[0] - 0.5 && sb[1] >= pb[1] - 0.5 && sb[2] <= pb[2] + 0.5 && sb[3] <= pb[3] + 0.5; o.g = Object.assign({}, o.g, { slab: inside ? own[k - 1] : own[k - 1].concat(own[k]) }); o.slabNote = '屋頂板沿用 ' + out[k - 1].f.name.replace(/\s*⚠/, ''); }
+  });
   const levels = []; let z = 0;
   for (const o of out) {
     const rep = Math.max(1, o.f.repeat || 1);
@@ -1308,7 +1323,7 @@ function v3Build(plan, ov) {
   const pan = (dx, dy) => { const k = C.r * 0.0016, rx = Math.cos(C.th), rz = -Math.sin(C.th); C.tx -= dx * k * rx; C.tz -= dx * k * rz; C.ty += dy * k; };
   const pts = new Map(); let pinch = null;
   cv.addEventListener('contextmenu', e => e.preventDefault());
-  cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId); pts.set(e.pointerId, { x: e.clientX, y: e.clientY, b: e.button, sh: e.shiftKey }); pinch = null; });
+  cv.addEventListener('pointerdown', e => { try { cv.setPointerCapture(e.pointerId); } catch (er) {} pts.set(e.pointerId, { x: e.clientX, y: e.clientY, b: e.button, sh: e.shiftKey }); pinch = null; });
   cv.addEventListener('pointermove', e => {
     const p = pts.get(e.pointerId); if (!p) return;
     const dx = e.clientX - p.x, dy = e.clientY - p.y; p.x = e.clientX; p.y = e.clientY;
@@ -1334,6 +1349,7 @@ function v3Build(plan, ov) {
   const ease = k => 1 - Math.pow(1 - k, 3);
   let lastSync = -1;
   const sync = () => {
+    V3.t = Math.min(N, Math.max(0, V3.t));
     const t = V3.t, ghost = $('#v3Ghost').checked;
     let done = 0;
     steps.forEach((st, i) => {
