@@ -146,6 +146,8 @@ details summary { cursor: pointer; color: var(--accent); font-size: 13px; }
 .v3d-main { flex: 1; display: flex; min-height: 0; }
 .v3d-cv { flex: 1; position: relative; min-width: 0; }
 .v3d-cv canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: grab; display: block; }
+.v3d-note { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); max-width: min(560px, 90%); background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn); border-radius: 6px; padding: 10px 14px; font-size: 13px; z-index: 2; }
+.v3d-note.bad { background: #fde8e6; color: #b42318; border-color: #b42318; }
 .v3d-hint { position: absolute; left: 10px; bottom: 8px; color: #6b665c; pointer-events: none; }
 .v3d-side { width: 260px; flex: none; border-left: 1px solid var(--line); background: var(--sheet); padding: 12px; display: flex; flex-direction: column; gap: 12px; overflow: auto; }
 .v3d-now b, .v3d-conc b.num { display: block; font-size: 18px; }
@@ -2785,6 +2787,14 @@ function v3Plan(floors) {
         const al = QE.alignByColumns(out[j].g.cols, g.cols, guess);
         if (al && al.n >= Math.min(3, g.cols.length) && al.n >= 2) d = [al.dx, al.dy];
       }
+      // 沒有柱子可對(例如屋頂層只有梁):改用梁的端點對
+      const bp = gg => gg.beams.flatMap(b => [[b[0], b[1]], [b[2], b[3]]]), mine = bp(g);
+      for (let j = k - 1; j >= 0 && !d && mine.length >= 4; j--) {
+        const theirs = bp(out[j].g); if (!theirs.length) continue;
+        const pb = out[j].bb, guess = [(pb[0] + pb[2]) / 2 - c[0], (pb[1] + pb[3]) / 2 - c[1]];
+        const al = QE.alignByColumns(theirs, mine, guess);
+        if (al && al.n >= Math.max(3, mine.length * 0.4)) d = [al.dx, al.dy];
+      }
       if (!d) { const pb = out[k - 1].bb; d = [(pb[0] + pb[2]) / 2 - c[0], (pb[1] + pb[3]) / 2 - c[1]]; warn.push(src[k].f.name.replace(/\s*⚠/, '')); }
     }
     const gg = QE.shiftGeom(g, d[0], d[1]);
@@ -2877,6 +2887,15 @@ function v3Build(plan, ov) {
 
   const cv = $('#v3Cv');
   const renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true }); renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+  // 畫面上的提示(出錯、沒開圖形加速)
+  const note = document.createElement('div'); note.className = 'v3d-note'; note.hidden = true; cv.parentElement.appendChild(note);
+  const showNote = (html, bad) => { note.innerHTML = html; note.hidden = false; note.classList.toggle('bad', !!bad); };
+  try {
+    const gl = renderer.getContext(), ext = gl.getExtension('WEBGL_debug_renderer_info');
+    const gpu = ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : '';
+    if (/SwiftShader|llvmpipe|Software|Basic Render/i.test(gpu)) showNote('這個瀏覽器沒有開「圖形加速」,3D 會很慢、看起來像沒在動。<br>Chrome:右上角 ⋮ → 設定 → 系統 → 打開「使用圖形加速功能 (如果可用)」→ 按「重新啟動」。');
+  } catch (e) {}
+  cv.addEventListener('webglcontextlost', e => { e.preventDefault(); showNote('3D 畫面被顯示卡中斷了,請按「關閉」再開一次。', true); });
   const scene = new THREE.Scene(); scene.background = new THREE.Color('#f3f1ec');
   const camera = new THREE.PerspectiveCamera(40, 1, 0.5, 5000);
   scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8478, 1.6));
@@ -2987,10 +3006,12 @@ function v3Build(plan, ov) {
   $('#v3Close').addEventListener('click', close);
   let prev = performance.now();
   const loop = now => {
-    const dt = Math.min(0.5, (now - prev) / 1000); prev = now;
-    if (V3.play) { V3.t = Math.min(N, V3.t + dt * parseFloat($('#v3Spd').value)); if (V3.t >= N) V3.play = false; }
-    if (V3.t !== lastSync || V3.play) { sync(); lastSync = V3.t; }
-    applyCam(); renderer.render(scene, camera);
+    try {
+      const dt = Math.min(2, Math.max(0, (now - prev) / 1000)); prev = now; // 電腦慢時照實際經過的時間前進
+      if (V3.play) { V3.t = Math.min(N, V3.t + dt * parseFloat($('#v3Spd').value)); if (V3.t >= N) V3.play = false; }
+      if (V3.t !== lastSync || V3.play) { sync(); lastSync = V3.t; }
+      applyCam(); renderer.render(scene, camera);
+    } catch (e) { console.error(e); V3.play = false; showNote('3D 播放出錯:' + esc((e && e.message) || String(e)) + '<br>請把這行字告訴 Claude。', true); return; }
     V3.raf = requestAnimationFrame(loop);
   };
   V3.raf = requestAnimationFrame(loop);
