@@ -1264,7 +1264,7 @@ function v3Build(plan, ov) {
   ov.innerHTML = `<div class="v3d-top"><b>3D 施工動畫</b><span class="small muted" id="v3Info"></span><span class="sp"></span>
     <label class="small"><input type="checkbox" id="v3Ghost" checked> 顯示還沒蓋的部分</label>
     <button class="btn small" id="v3Close" type="button">關閉</button></div>
-    <div class="v3d-main"><div class="v3d-cv"><canvas id="v3Cv"></canvas><div class="v3d-views" role="group" aria-label="視角"><button type="button" data-view="fit" title="回到看得到整棟的斜角">看整棟</button><button type="button" data-view="front" title="從平面圖下方那一面看">前</button><button type="button" data-view="back" title="從平面圖上方那一面看">後</button><button type="button" data-view="left" title="從平面圖左邊看">左</button><button type="button" data-view="right" title="從平面圖右邊看">右</button><button type="button" data-view="top" title="從正上方往下看">上</button></div><div class="v3d-hint small">拖曳旋轉 · 右鍵或 Shift 拖曳平移 · 滾輪在游標處縮放 · 點兩下拉近該處</div></div>
+    <div class="v3d-main"><div class="v3d-cv"><canvas id="v3Cv"></canvas><div class="v3d-views" role="group" aria-label="視角"><button type="button" data-view="fit" title="回到看得到整棟的斜角">看整棟</button><button type="button" data-view="front" title="從平面圖下方那一面看">前</button><button type="button" data-view="back" title="從平面圖上方那一面看">後</button><button type="button" data-view="left" title="從平面圖左邊看">左</button><button type="button" data-view="right" title="從平面圖右邊看">右</button><button type="button" data-view="top" title="從正上方往下看">上</button></div><div class="v3d-hint small">拖曳旋轉 · 右鍵或 Shift 拖曳平移 · 滾輪在游標處縮放(拉到底會往前走) · 點兩下拉近該處</div></div>
     <aside class="v3d-side"><div class="v3d-now" id="v3Now"></div><div class="v3d-conc" id="v3Conc"></div>
     <div class="v3d-layers" role="group" aria-label="顯示哪些東西"><span class="small muted">顯示</span>${V3_LAYERS.map(([k, n]) => `<label><input type="checkbox" data-layer="${k}" ${V3.layers[k] ? 'checked' : ''}> ${n}</label>`).join('')}</div>
     <div class="v3d-leg">${[['col', '柱'], ['rc', 'RC 牆'], ['brick', '磚牆'], ['block', '白磚/輕隔間'], ['beam', '梁'], ['slab', '樓板']].map(([k, n]) => `<span><i style="background:${V3_COLOR[k]}"></i>${n}</span>`).join('')}<span><i style="background:#7fb0d6"></i>窗/玻璃欄杆</span><span><i style="background:#8a5a3c"></i>門</span><span><i style="background:#f4f4f2"></i>設備</span><span><i style="background:var(--brand-orange)"></i>施工中</span></div>
@@ -1289,7 +1289,7 @@ function v3Build(plan, ov) {
   } catch (e) {}
   cv.addEventListener('webglcontextlost', e => { e.preventDefault(); showNote('3D 畫面被顯示卡中斷了,請按「關閉」再開一次。', true); });
   const scene = new THREE.Scene(); scene.background = new THREE.Color('#f3f1ec');
-  const camera = new THREE.PerspectiveCamera(40, 1, 0.5, 5000);
+  const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 5000);
   scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8478, 1.6));
   const sun = new THREE.DirectionalLight(0xffffff, 1.6); sun.position.set(0.6, 1, 0.35); scene.add(sun);
   const M = {}; for (const k in V3_COLOR) M[k] = new THREE.MeshLambertMaterial({ color: V3_COLOR[k], side: THREE.DoubleSide });
@@ -1390,10 +1390,16 @@ function v3Build(plan, ov) {
     return ray.ray.intersectPlane(pl, new THREE.Vector3());
   };
   // 以某一點為中心縮放(那一點在畫面上不動)
+  const R_MIN = 1;
   const zoomAt = (P, k) => {
-    const nr = Math.min(span * 8, Math.max(2, C.r * k)); k = nr / C.r;
+    const want = C.r * k, nr = Math.min(span * 8, Math.max(R_MIN, want)); k = nr / C.r;
     if (P) { C.tx = P.x + (C.tx - P.x) * k; C.ty = P.y + (C.ty - P.y) * k; C.tz = P.z + (C.tz - P.z) * k; }
     C.r = nr;
+    // 已經拉到最近還要再拉近:整個往前走(可以一直鑽進樓裡)
+    if (want < R_MIN) {
+      const go = (R_MIN - want) * 1.5, dx = -Math.sin(C.ph) * Math.sin(C.th), dy = -Math.cos(C.ph), dz = -Math.sin(C.ph) * Math.cos(C.th);
+      C.tx += dx * go; C.ty += dy * go; C.tz += dz * go;
+    }
   };
   const focusAt = (cx, cy) => { const P = pick(cx, cy); if (P) goTo({ tx: P.x, ty: P.y, tz: P.z, r: Math.max(8, Math.min(C.r * 0.5, span * 0.6)) }); };
   const pts = new Map(); let pinch = null, tap = null, lastTap = null;
