@@ -1418,31 +1418,41 @@ function findPlanTitles(F) {
   return out.map(t => ({ title: t.s, x: t.x, y: t.y, h: t.h, repeat: floorRepeat(t.s) }));
 }
 function planBoxNearTitle(F, t, layerRoles, opt) {
+  // 圖名通常寫在平面圖下方:先往上找;往上找不到、或找到的圖離圖名很遠,再試圖名在上方、左邊、右邊的寫法
   opt = opt || {};
-  const h = t.h || 100;
-  const win = [t.x - (opt.wx || 30) * h, t.y - 5 * h, t.x + (opt.wx || 30) * h, t.y + (opt.wy || 45) * h];
+  const h = t.h || 100, wx = (opt.wx || 30) * h, wy = (opt.wy || 45) * h;
   const isWall = F.layerNames.map(n => { const r = (layerRoles[n] || guessRole(n)).role; return opt.members ? opt.members.indexOf(r) >= 0 : (r.startsWith('wall_') || r === 'column' || r === 'rail'); });
-  const cand = F.polys.filter(p => isWall[p.L] && p.bb[0] >= win[0] && p.bb[2] <= win[2] && p.bb[1] >= win[1] && p.bb[3] <= win[3]);
-  if (!cand.length) return null;
-  // 從圖名上方最近的牆開始,逐步併入相鄰圖元
-  const target = [t.x, t.y + 8 * h];
-  let best = null, bd = Infinity;
-  for (const p of cand) { const cx = (p.bb[0] + p.bb[2]) / 2, cy = (p.bb[1] + p.bb[3]) / 2; if (cy < t.y) continue; const d = Math.hypot(cx - target[0], cy - target[1]); if (d < bd) { bd = d; best = p; } }
-  if (!best) return null;
-  let bb = best.bb.slice();
-  const gap = (opt.gap || 3) * h;
-  let used = new Uint8Array(cand.length);
-  let changed = true, guard = 0;
-  while (changed && guard++ < 60) {
-    changed = false;
-    for (let i = 0; i < cand.length; i++) {
-      if (used[i]) continue; const q = cand[i].bb;
-      if (q[0] > bb[2] + gap || q[2] < bb[0] - gap || q[1] > bb[3] + gap || q[3] < bb[1] - gap) continue;
-      used[i] = 1; bb = [Math.min(bb[0], q[0]), Math.min(bb[1], q[1]), Math.max(bb[2], q[2]), Math.max(bb[3], q[3])]; changed = true;
+  const gap = (opt.gap || 3) * h, m = 1.5 * h;
+  const tryDir = (win, target, side) => {
+    const cand = F.polys.filter(p => isWall[p.L] && p.bb[0] >= win[0] && p.bb[2] <= win[2] && p.bb[1] >= win[1] && p.bb[3] <= win[3]);
+    if (!cand.length) return null;
+    // 從圖名那一側最近的牆開始,逐步併入相鄰圖元
+    let best = -1, bd = Infinity;
+    cand.forEach((p, k) => { const cx = (p.bb[0] + p.bb[2]) / 2, cy = (p.bb[1] + p.bb[3]) / 2; if (!side(cx, cy)) return; const d = Math.hypot(cx - target[0], cy - target[1]); if (d < bd) { bd = d; best = k; } });
+    if (best < 0) return null;
+    let bb = cand[best].bb.slice(); const used = new Uint8Array(cand.length); used[best] = 1;
+    let changed = true, guard = 0;
+    while (changed && guard++ < 60) {
+      changed = false;
+      for (let i = 0; i < cand.length; i++) {
+        if (used[i]) continue; const q = cand[i].bb;
+        if (q[0] > bb[2] + gap || q[2] < bb[0] - gap || q[1] > bb[3] + gap || q[3] < bb[1] - gap) continue;
+        used[i] = 1; bb = [Math.min(bb[0], q[0]), Math.min(bb[1], q[1]), Math.max(bb[2], q[2]), Math.max(bb[3], q[3])]; changed = true;
+      }
     }
-  }
-  const m = 1.5 * h;
-  return [bb[0] - m, bb[1] - m, bb[2] + m, bb[3] + m];
+    const dist = Math.hypot(Math.max(bb[0] - t.x, 0, t.x - bb[2]), Math.max(bb[1] - t.y, 0, t.y - bb[3])); // 圖名到這張圖的距離
+    return { box: [bb[0] - m, bb[1] - m, bb[2] + m, bb[3] + m], dist };
+  };
+  const up = tryDir([t.x - wx, t.y - 5 * h, t.x + wx, t.y + wy], [t.x, t.y + 8 * h], (cx, cy) => cy >= t.y);
+  if (up && up.dist <= 10 * h) return up.box;
+  const others = [
+    tryDir([t.x - wx, t.y - wy, t.x + wx, t.y + 5 * h], [t.x, t.y - 8 * h], (cx, cy) => cy <= t.y),  // 圖名在上方
+    tryDir([t.x - wy, t.y - wx, t.x + 5 * h, t.y + wx], [t.x - 8 * h, t.y], (cx, cy) => cx <= t.x),  // 圖名在右邊
+    tryDir([t.x - 5 * h, t.y - wx, t.x + wy, t.y + wx], [t.x + 8 * h, t.y], (cx, cy) => cx >= t.x),  // 圖名在左邊
+  ].filter(Boolean);
+  let pick = up;
+  for (const o of others) if (!pick || o.dist < pick.dist - 2 * h) pick = o;
+  return pick ? pick.box : null;
 }
 function detectUnit(F, insunits) {
   // 以門圖塊寬度中位數判斷(門寬約 70~120 cm)
